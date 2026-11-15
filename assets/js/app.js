@@ -248,7 +248,7 @@
     let j;
     try { j = await res.json(); } catch (e) { throw Object.assign(new Error('Phản hồi không hợp lệ từ Apps Script (kiểm tra quyền truy cập "Anyone")'), { net: true }); }
     if (!j.ok) {
-      if (String(j.error).startsWith('AUTH')) { showLogin(true); throw Object.assign(new Error('Sai mã truy cập'), { auth: true }); }
+      if (String(j.error).startsWith('AUTH')) { state.authFail = true; showLogin(true); throw Object.assign(new Error('Sai mã truy cập'), { auth: true }); }
       throw new Error(j.error || 'Lỗi không xác định');
     }
     return j;
@@ -260,6 +260,7 @@
     let t = text;
     if (!t) {
       if (!state.apiUrl) t = 'Ngoại tuyến (chưa kết nối)';
+      else if (state.authFail) { kind = 'off'; b.className = 'sync off'; t = 'Chưa đăng nhập' + (q ? ` · chờ ${q}` : ''); }
       else if (kind === 'busy') t = 'Đang đồng bộ…';
       else if (kind === 'off') t = 'Mất kết nối' + (q ? ` · chờ ${q}` : '');
       else t = q ? `Chờ đồng bộ ${q}` : ('Đã đồng bộ ' + (state.lastSync ? state.lastSync.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''));
@@ -302,6 +303,7 @@
   }
 
   async function flush() {
+    if (state.authFail) { setSync('off'); return; }
     if (!state.apiUrl || state.syncing || !state.queue.length) { if (!state.queue.length && state.apiUrl && !state.syncing) setSync(state.online ? 'ok' : 'off'); return; }
     state.syncing = true; setSync('busy');
     let changed = false;
@@ -322,36 +324,75 @@
     setSync(state.online ? (state.queue.length ? 'busy' : 'ok') : 'off');
     if (changed) refreshSoon();
   }
-  const refreshSoon = debounce(() => fetchAll(true), 1200);
+  // Sau khi ghi xong: chỉ tải lại các tab vừa đổi (không tải lại cả file)
+  const refreshSoon = debounce(() => checkChanges(true), 600);
+
+  // Sau khi có dữ liệu mới: áp lại thay đổi chưa gửi, lưu đệm, vẽ lại
+  function afterData(rev) {
+    state.rev = rev; state.mode = 'live'; state.online = true; state.authFail = false; state.lastSync = new Date();
+    state.queue.forEach(applyLocal);
+    saveCache(); fillDatalists(); buildNav(); updateBanner();
+    setSync(state.queue.length ? 'busy' : 'ok');
+    rerender();
+  }
 
   async function fetchAll(quiet) {
     if (!state.apiUrl) return;
+    state.refreshing = true;
     try {
       setSync('busy', 'Đang tải dữ liệu…');
       const j = await api('all');
       state.data = { sheets: j.sheets, order: j.order, title: j.title, url: j.url, generatedAt: j.generatedAt };
       state.images = j.images || [];
-      state.rev = j.rev; state.mode = 'live'; state.online = true; state.lastSync = new Date();
-      state.queue.forEach(applyLocal);
-      saveCache(); fillDatalists(); buildNav(); updateBanner();
-      setSync(state.queue.length ? 'busy' : 'ok');
-      rerender();
+      afterData(j.rev);
       if (!quiet) toast('Đã tải dữ liệu mới nhất từ Google Sheet');
     } catch (e) {
-      state.online = false; setSync('off');
+      if (!e.auth) state.online = false;
+      setSync('off');
       if (!e.auth) toast('Không tải được dữ liệu: ' + e.message, 'err');
-    }
+    } finally { state.refreshing = false; }
   }
 
-  async function poll() {
-    if (!state.apiUrl || document.hidden || state.syncing) return;
+  /** Tải lại một số tab. `rev` là phiên bản mà danh sách tab này ứng với. */
+  async function fetchSheets(names, rev) {
+    state.refreshing = true;
+    try {
+      setSync('busy', 'Đang cập nhật…');
+      const j = await api('all', { sheets: names.join(','), nodv: 1 });
+      if (!j.partial) {                    // Apps Script bản cũ bỏ qua tham số → đã trả về cả file
+        state.data = { sheets: j.sheets, order: j.order, title: j.title, url: j.url, generatedAt: j.generatedAt };
+      } else {
+        Object.keys(j.sheets).forEach(n => {
+          const s = j.sheets[n], old = state.data.sheets[n];
+          if (!s.dv) s.dv = old ? old.dv : {};
+          state.data.sheets[n] = s;
+        });
+        state.data.generatedAt = j.generatedAt;
+      }
+      state.images = j.images || state.images;
+      afterData(j.partial ? rev : j.rev);
+    } finally { state.refreshing = false; }
+  }
+
+  /** Hỏi máy chủ có gì mới; có thì chỉ tải lại phần đã đổi. */
+  async function checkChanges(force) {
+    if (!state.apiUrl || state.authFail || state.refreshing) return;
+    if (!force && (document.hidden || state.syncing)) return;
     if (state.queue.length) { flush(); return; }
     try {
-      const j = await api('rev');
+      const j = await api('rev', { since: state.rev || 0 });
       state.online = true;
-      if (j.rev !== state.rev) await fetchAll(true); else setSync('ok');
-    } catch (e) { state.online = false; setSync('off'); }
+      if (j.rev === state.rev) { setSync('ok'); return; }
+      const list = Array.isArray(j.sheets) ? j.sheets : null;
+      // Không có danh sách (Apps Script bản cũ / nhật ký hết hạn) hoặc có tab mới → tải lại toàn bộ
+      if (!list || state.mode !== 'live' || !state.data || list.some(n => !state.data.sheets[n])) return await fetchAll(true);
+      if (!list.length) { state.rev = j.rev; setSync('ok'); return; }
+      await fetchSheets(list, j.rev);
+    } catch (e) {
+      if (!e.auth) { state.online = false; setSync('off'); }
+    }
   }
+  const poll = () => checkChanges(false);
 
   function rerender() {
     if (state.editing || $('#drawer').classList.contains('open')) { state.pendingRender = true; return; }
@@ -1214,7 +1255,7 @@
           <div class="setting-row"><label>Bộ nhớ đệm trên máy</label><div><button class="btn sm" id="cClear">Xóa bộ nhớ đệm & tải lại</button></div></div>
         </div></div>
       </div>`;
-    const readForm = () => { state.apiUrl = $('#sUrl').value.trim(); state.key = $('#sKey').value; state.user = $('#sUser').value.trim(); LS.set('apiUrl', state.apiUrl); LS.set('key', state.key); LS.set('user', state.user); };
+    const readForm = () => { state.authFail = false; state.apiUrl = $('#sUrl').value.trim(); state.key = $('#sKey').value.trim(); state.user = $('#sUser').value.trim(); LS.set('apiUrl', state.apiUrl); LS.set('key', state.key); LS.set('user', state.user); };
     $('#sSave').onclick = async () => { readForm(); updateBanner(); if (state.apiUrl) { await fetchAll(); flush(); } route(true); };
     $('#sTest').onclick = async () => { readForm(); try { const j = await api('ping'); toast(`Kết nối OK: “${j.title}”`); state.online = true; } catch (e) { toast('Lỗi: ' + e.message, 'err'); } };
     if ($('#sOff')) $('#sOff').onclick = () => { state.apiUrl = ''; LS.set('apiUrl', ''); state.mode = 'snapshot'; updateBanner(); setSync(''); route(true); };
@@ -1225,7 +1266,9 @@
     $('#cClear').onclick = () => { LS.del('cache'); location.reload(); };
     const listBk = async () => {
       if (!state.apiUrl) return;
-      try { const j = await api('backups'); $('#bList').innerHTML = j.backups.length ? '<ul class="list" style="border:1px solid var(--line);border-radius:10px">' + j.backups.slice(0, 10).map(b => `<li><div class="grow"><div class="t">${esc(b.name)}</div><div class="s">${esc(b.time)}</div></div><a class="btn sm" href="${esc(b.url)}" target="_blank" rel="noopener">Mở</a></li>`).join('') + '</ul>' : '<div class="muted">Chưa có bản sao lưu.</div>'; }
+      // Máy chủ trả thời gian dạng dd/MM/yyyy HH:mm: đổi ra số để sắp xếp đúng (mới nhất trước)
+      const tsOf = s => { const m = String(s).match(/(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})/); return m ? +(m[3] + m[2] + m[1] + m[4] + m[5]) : 0; };
+      try { const j = await api('backups'); j.backups.sort((a, b) => tsOf(b.time) - tsOf(a.time)); $('#bList').innerHTML = j.backups.length ? '<ul class="list" style="border:1px solid var(--line);border-radius:10px">' + j.backups.slice(0, 10).map(b => `<li><div class="grow"><div class="t">${esc(b.name)}</div><div class="s">${esc(b.time)}</div></div><a class="btn sm" href="${esc(b.url)}" target="_blank" rel="noopener">Mở</a></li>`).join('') + '</ul>' : '<div class="muted">Chưa có bản sao lưu.</div>'; }
       catch (e) { $('#bList').innerHTML = ''; }
     };
     listBk();
@@ -1254,7 +1297,7 @@
       <div class="field"><label>Mã truy cập</label><input class="input" id="lKey" type="password" value="${esc(state.key)}"></div>
       <div class="row"><button class="btn" id="lLater">Để sau</button><button class="btn primary" id="lOk">Vào hệ thống</button></div></div>`;
     document.body.appendChild(bg);
-    $('#lOk').onclick = () => { state.user = $('#lUser').value.trim(); state.key = $('#lKey').value; LS.set('user', state.user); LS.set('key', state.key); bg.remove(); fetchAll(); flush(); };
+    $('#lOk').onclick = () => { state.user = $('#lUser').value.trim(); state.key = $('#lKey').value.trim(); LS.set('user', state.user); LS.set('key', state.key); state.authFail = false; bg.remove(); fetchAll().then(flush); };
     $('#lLater').onclick = () => bg.remove();
     $('#lKey').addEventListener('keydown', e => { if (e.key === 'Enter') $('#lOk').click(); });
   }
@@ -1279,6 +1322,7 @@
     $('#khoFilter').value = state.kho;
     $('#khoFilter').onchange = e => { setKho(e.target.value); Object.values(state.views).forEach(v => v.page = 1); route(true); };
     $('#openSheet').href = `https://docs.google.com/spreadsheets/d/${C.SHEET_ID}/edit`;
+    $('#syncBadge').onclick = () => { if (state.authFail) showLogin(true); };
     $('#menuBtn').onclick = () => $('#app').classList.toggle('nav-open');
     $('#scrim').onclick = () => $('#app').classList.remove('nav-open');
     $('#refreshBtn').onclick = () => { if (state.apiUrl) { flush(); fetchAll(); } else toast('Chưa kết nối Google Sheet – vào Cài đặt để kết nối', 'warn'); };

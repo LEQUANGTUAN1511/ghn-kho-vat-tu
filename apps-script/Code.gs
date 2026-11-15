@@ -49,14 +49,15 @@ function handle_(action, p) {
     var res;
     switch (action) {
       case 'ping': res = { ok: true, rev: rev_(), title: ss_().getName() }; break;
-      case 'rev': res = { ok: true, rev: rev_() }; break;
-      case 'all': res = getAll_(p.sheets); break;
-      case 'update': res = withLock_(function () { return update_(p); }); break;
-      case 'append': res = withLock_(function () { return append_(p); }); break;
-      case 'clearRow': res = withLock_(function () { return clearRow_(p); }); break;
-      case 'addColumn': res = withLock_(function () { return addColumn_(p); }); break;
-      case 'upload': res = withLock_(function () { return upload_(p); }); break;
-      case 'deleteImage': res = withLock_(function () { return deleteImage_(p); }); break;
+      // since = số phiên bản web đang có → trả thêm danh sách tab cần tải lại (null = tải lại toàn bộ)
+      case 'rev': res = { ok: true, rev: rev_(), sheets: p.since ? changedSince_(p.since) : null }; break;
+      case 'all': res = getAll_(p.sheets, p.nodv === '1' || p.nodv === 1 || p.nodv === true); break;
+      case 'update': res = withLock_(function () { return update_(p); }, p.sheet); break;
+      case 'append': res = withLock_(function () { return append_(p); }, p.sheet); break;
+      case 'clearRow': res = withLock_(function () { return clearRow_(p); }, p.sheet); break;
+      case 'addColumn': res = withLock_(function () { return addColumn_(p); }, p.sheet); break;
+      case 'upload': res = withLock_(function () { return upload_(p); }, CFG.IMG_SHEET); break;
+      case 'deleteImage': res = withLock_(function () { return deleteImage_(p); }, CFG.IMG_SHEET); break;
       case 'backup': res = { ok: true, backup: backupNow() }; break;
       case 'backups': res = { ok: true, backups: listBackups_() }; break;
       case 'log': res = { ok: true, log: readLog_(Number(p.limit) || 300) }; break;
@@ -72,15 +73,24 @@ function out_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
+/* Bộ nhớ đệm của script: web hỏi "có gì mới không" mỗi 10 giây, nên đọc từ đây
+ * thay vì PropertiesService (có hạn mức đọc/ghi mỗi ngày). */
+var CACHE_TTL = 21600; // 6 giờ – tối đa cho phép
+function cache_() { return CacheService.getScriptCache(); }
+
 function checkKey_(key) {
-  var pass = PropertiesService.getScriptProperties().getProperty('APP_PASSCODE');
+  var c = cache_(), pass = c.get('PASS');
+  if (pass === null) {
+    pass = PropertiesService.getScriptProperties().getProperty('APP_PASSCODE') || '';
+    c.put('PASS', pass, 600);
+  }
   if (pass && String(key || '') !== pass) throw new Error('AUTH: Sai mã truy cập');
 }
 
-function withLock_(fn) {
+function withLock_(fn, sheetName) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
-  try { var r = fn(); bumpRev_(); SpreadsheetApp.flush(); return r; }
+  try { var r = fn(); SpreadsheetApp.flush(); bumpRev_(sheetName); return r; }
   finally { lock.releaseLock(); }
 }
 
@@ -89,16 +99,91 @@ function ss_() {
   return SpreadsheetApp.openById(CFG.SPREADSHEET_ID);
 }
 
-function rev_() { return Number(PropertiesService.getScriptProperties().getProperty('REV') || 1); }
-function bumpRev_() { var p = PropertiesService.getScriptProperties(); p.setProperty('REV', String(rev_() + 1)); }
+/* ---------- Số phiên bản (REV) + nhật ký tab vừa đổi ----------
+ * Mỗi lần ghi, REV tăng 1 và ghi lại [REV, tên tab] vào bộ nhớ đệm 'CHG'.
+ * Web gửi REV nó đang có → nhận đúng các tab cần tải lại, thay vì cả 22 tab. */
+function rev_() {
+  var c = cache_(), v = c.get('REV');
+  if (v === null) {
+    v = PropertiesService.getScriptProperties().getProperty('REV') || '1';
+    c.put('REV', v, CACHE_TTL);
+  }
+  return Number(v);
+}
 
-/** Trigger đơn giản: khi sửa trực tiếp trên Google Sheet, web sẽ biết để tải lại. */
-function onEdit(e) { try { bumpRev_(); } catch (err) {} }
+function bumpRev_(sheetName) {
+  var c = cache_(), n = rev_() + 1;
+  c.put('REV', String(n), CACHE_TTL);
+  PropertiesService.getScriptProperties().setProperty('REV', String(n));
+  var log = [];
+  try { log = JSON.parse(c.get('CHG') || '[]'); } catch (e) { log = []; }
+  log.push([n, sheetName || '*']);
+  if (log.length > 300) log = log.slice(-300);
+  c.put('CHG', JSON.stringify(log), CACHE_TTL);
+  return n;
+}
+
+/** Các tab đã đổi sau phiên bản `since` (kèm tab có công thức phụ thuộc).
+ *  Trả null khi không chắc chắn (nhật ký thiếu/hết hạn) → web tải lại toàn bộ. */
+function changedSince_(since) {
+  since = Number(since);
+  var cur = rev_();
+  if (!since || since > cur) return null;
+  if (since === cur) return [];
+  var log = [];
+  try { log = JSON.parse(cache_().get('CHG') || '[]'); } catch (e) { return null; }
+  var rel = log.filter(function (e) { return e[0] > since; }).sort(function (a, b) { return a[0] - b[0]; });
+  var names = {}, expect = since + 1;
+  for (var i = 0; i < rel.length; i++) {
+    if (rel[i][0] !== expect) return null;   // thiếu hoặc trùng số → không tin được
+    if (rel[i][1] === '*') return null;
+    names[rel[i][1]] = true; expect++;
+  }
+  if (expect !== cur + 1) return null;
+  return withDependents_(Object.keys(names));
+}
+
+/** Bản đồ phụ thuộc: tab nguồn → các tab có công thức tham chiếu tới nó.
+ *  Quét công thức 60 dòng đầu mỗi tab, lưu đệm 6 giờ. */
+function depMap_() {
+  var c = cache_(), s = c.get('DEPS');
+  if (s) { try { return JSON.parse(s); } catch (e) {} }
+  var sheets = ss_().getSheets(), names = sheets.map(function (x) { return x.getName(); }), map = {};
+  sheets.forEach(function (sh) {
+    var n = sh.getName(), lr = Math.min(sh.getLastRow(), 60), lc = sh.getLastColumn();
+    if (lr < 1 || lc < 1) return;
+    var txt = sh.getRange(1, 1, lr, lc).getFormulas().map(function (r) { return r.join('\n'); }).join('\n');
+    if (!txt.replace(/\s/g, '')) return;
+    names.forEach(function (src) {
+      if (src === n) return;
+      if (txt.indexOf(src + '!') >= 0 || txt.indexOf("'" + src + "'!") >= 0) (map[src] = map[src] || []).push(n);
+    });
+  });
+  c.put('DEPS', JSON.stringify(map), CACHE_TTL);
+  return map;
+}
+
+function withDependents_(list) {
+  var map = depMap_(), seen = {}, queue = list.slice();
+  while (queue.length) {
+    var n = queue.shift();
+    if (seen[n]) continue;
+    seen[n] = true;
+    (map[n] || []).forEach(function (d) { if (!seen[d]) queue.push(d); });
+  }
+  return Object.keys(seen);
+}
+
+/** Trigger đơn giản: khi sửa trực tiếp trên Google Sheet, web sẽ biết tab nào cần tải lại. */
+function onEdit(e) {
+  try { bumpRev_(e && e.range ? e.range.getSheet().getName() : '*'); } catch (err) {}
+}
 
 /* ============================ ĐỌC ============================ */
 
-function getAll_(only) {
+function getAll_(only, noDv) {
   var ss = ss_();
+  var rev = rev_(); // đọc phiên bản TRƯỚC khi đọc dữ liệu, để không bỏ sót thay đổi xảy ra trong lúc đọc
   var want = only ? String(only).split(',') : null;
   var sheets = {}, order = [];
   ss.getSheets().forEach(function (sh) {
@@ -106,12 +191,12 @@ function getAll_(only) {
     if (name === CFG.LOG_SHEET) return;
     if (want && want.indexOf(name) < 0) return;
     order.push(name);
-    sheets[name] = readSheet_(sh);
+    sheets[name] = readSheet_(sh, noDv);
   });
-  return { ok: true, rev: rev_(), title: ss.getName(), url: ss.getUrl(), generatedAt: fmtDT_(new Date()), sheets: sheets, order: order, images: readImages_() };
+  return { ok: true, rev: rev, partial: !!want, title: ss.getName(), url: ss.getUrl(), generatedAt: fmtDT_(new Date()), sheets: sheets, order: order, images: readImages_() };
 }
 
-function readSheet_(sh) {
+function readSheet_(sh, noDv) {
   var lastR = sh.getLastRow(), lastC = sh.getLastColumn();
   if (lastR < 1 || lastC < 1) return { v: [], fm: [], dv: {} };
   var rng = sh.getRange(1, 1, lastR, lastC);
@@ -136,7 +221,8 @@ function readSheet_(sh) {
     for (var m = 0; m < maxC; m++) s += forms[k][m] ? '1' : '0';
     fm.push(s.replace(/0+$/, ''));
   }
-  return { v: v, fm: fm, dv: readDV_(sh, Math.min(lastR, CFG.DV_ROWS), maxC) };
+  // noDv: lần tải lại nhanh bỏ qua dropdown (ít khi đổi, web giữ bản cũ)
+  return { v: v, fm: fm, dv: noDv ? null : readDV_(sh, Math.min(lastR, CFG.DV_ROWS), maxC) };
 }
 
 function enc_(v, fmt) {
@@ -348,8 +434,8 @@ function backupNow() {
 
 function listBackups_() {
   var folder = folder_(CFG.BACKUP_FOLDER), it = folder.getFiles(), out = [];
-  while (it.hasNext()) { var f = it.next(); out.push({ name: f.getName(), url: f.getUrl(), time: fmtDT_(f.getDateCreated()) }); }
-  out.sort(function (a, b) { return a.time < b.time ? 1 : -1; });
+  while (it.hasNext()) { var f = it.next(); out.push({ name: f.getName(), url: f.getUrl(), time: fmtDT_(f.getDateCreated()), ts: f.getDateCreated().getTime() }); }
+  out.sort(function (a, b) { return b.ts - a.ts; });
   return out;
 }
 
@@ -364,6 +450,7 @@ function setupTriggers() {
 /** Chạy 1 lần để đặt mã truy cập chung cho web (đổi chuỗi bên dưới trước khi chạy). */
 function setPasscode() {
   PropertiesService.getScriptProperties().setProperty('APP_PASSCODE', 'GHN-M12-2026');
+  cache_().remove('PASS'); // mã mới có hiệu lực ngay
   return 'Đã đặt mã truy cập';
 }
 

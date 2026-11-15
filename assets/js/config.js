@@ -7,7 +7,7 @@ window.APP_CONFIG = {
   API_URL: 'https://script.google.com/macros/s/AKfycbwHv4zowDXpSGhep-lh9CKWjBMZbt6QcynQYGF02pNvBmQ8UfJT6qMrDABFloNScW57lA/exec',
   SHEET_ID: '1SalSle0FPpD5KpBh3gb1ZQK3rKp1wglhaKAlHagUIaY',
   APP_NAME: 'Kho Vật Tư Cụm M12',
-  POLL_SECONDS: 20,        // kiểm tra thay đổi từ Google Sheet mỗi 20 giây
+  POLL_SECONDS: 10,        // kiểm tra thay đổi từ Google Sheet mỗi 10 giây (chỉ tải lại tab đã đổi)
   KHO: [
     { code: 'HCM20', name: 'Kho Trung Chuyển HCM20', short: 'HCM20', color: '#14a394', cal: 'LICH_CV_HCM20' },
     { code: 'ST', name: 'Kho Chuyển Tiếp Sóng Thần', short: 'Sóng Thần', color: '#3b82f6', cal: 'LICH_CV_ST' },
