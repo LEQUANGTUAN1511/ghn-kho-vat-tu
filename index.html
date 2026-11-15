@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GHN · Kho Vật Tư Cụm M12</title>
+  <meta name="description" content="Quản lý kho vật tư Cụm M12 (HCM20 · Sóng Thần · Tân Kim) – đồng bộ Google Sheet">
+  <meta name="theme-color" content="#04201f">
+  <link rel="icon" type="image/png" href="assets/img/ghn-logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#/tong-quan">
+        <img src="assets/img/ghn-logo.png" alt="GHN">
+        <div><b>Kho Vật Tư</b><small>Cụm M12 · 3 kho</small></div>
+      </a>
+      <nav id="nav"></nav>
+      <div class="side-foot">
+        <a href="#" id="openSheet" target="_blank" rel="noopener">Mở Google Sheet ↗</a>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="icon-btn only-mobile" id="menuBtn" aria-label="Mở menu">☰</button>
+        <div class="crumb" id="crumb"></div>
+        <div class="top-actions">
+          <label class="kho-select" title="Lọc toàn trang theo kho">
+            <span>Kho</span>
+            <select id="khoFilter"></select>
+          </label>
+          <span class="sync" id="syncBadge" title="Trạng thái đồng bộ"><i></i><em>…</em></span>
+          <button class="icon-btn" id="refreshBtn" title="Tải lại dữ liệu từ Google Sheet">⟳</button>
+          <button class="icon-btn" id="themeBtn" title="Đổi giao diện sáng / tối">◐</button>
+        </div>
+      </header>
+      <div class="banner" id="banner" hidden></div>
+      <main class="content" id="view"></main>
+    </div>
+  </div>
+
+  <div class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-panel">
+      <div class="drawer-head"><h3 id="drawerTitle"></h3><button class="icon-btn" data-close>✕</button></div>
+      <div class="drawer-body" id="drawerBody"></div>
+      <div class="drawer-foot" id="drawerFoot"></div>
+    </div>
+  </div>
+  <div class="lightbox" id="lightbox" hidden><img alt=""><div class="lb-cap"></div><button class="icon-btn" data-close>✕</button></div>
+  <div class="toasts" id="toasts"></div>
+  <datalist id="dl-NVL"></datalist><datalist id="dl-CCDC"></datalist><datalist id="dl-KHO"></datalist>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/snapshot.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>
