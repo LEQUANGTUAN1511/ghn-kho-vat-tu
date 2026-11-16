@@ -251,10 +251,48 @@ function readDV_(sh, rows, cols) {
 
 /* ============================ GHI ============================ */
 
+/* Các tab do web quản lý: tự tạo trên Sheet ở lần ghi đầu tiên. */
+var AUTO_SHEETS = {
+  QL_TASK: {
+    title: 'QUẢN LÝ TASK – CỤM M12',
+    sub: 'Dành cho Quản lý · Mỗi dòng 1 task. Bắt buộc có Người phụ trách và Hạn chót. Checklist: mỗi dòng 1 bước, "[x]" = xong, "[ ]" = chưa.',
+    headers: ['Mã task', 'Tiêu đề', 'Mô tả', 'Kho', 'Người phụ trách', 'Người giao', 'Ưu tiên', 'Ngày giao', 'Hạn chót',
+      'Trạng thái', 'Checklist', 'Ngày hoàn thành', 'Kết quả / ghi chú', 'Cập nhật lần cuối'],
+    lists: { D: ['Chung', 'HCM20', 'ST', 'TK'], G: ['Gấp', 'Cao', 'Trung bình', 'Thấp'],
+      J: ['Chưa làm', 'Đang làm', 'Chờ duyệt', 'Tạm hoãn', 'Hoàn thành', 'Hủy'] },
+    dates: ['H', 'I', 'L'],
+    widths: { A: 90, B: 260, C: 260, K: 260, M: 220, N: 170 }
+  }
+};
+
+function createAutoSheet_(name) {
+  var d = AUTO_SHEETS[name], sh = ss_().insertSheet(name), n = d.headers.length;
+  sh.getRange('A1').setValue(d.title).setFontWeight('bold').setFontSize(14);
+  sh.getRange('A2').setValue(d.sub).setFontColor('#5d706e');
+  sh.getRange(4, 1, 1, n).setValues([d.headers]).setFontWeight('bold').setBackground('#0f3d3a').setFontColor('#ffffff').setWrap(true);
+  sh.setFrozenRows(4);
+  Object.keys(d.lists).forEach(function (L) {
+    var rule = SpreadsheetApp.newDataValidation().requireValueInList(d.lists[L], true).setAllowInvalid(true).build();
+    sh.getRange(L + '5:' + L + '1000').setDataValidation(rule);
+  });
+  d.dates.forEach(function (L) { sh.getRange(L + '5:' + L + '1000').setNumberFormat('dd/mm/yyyy'); });
+  sh.getRange('A5:' + colLetter_(n) + '1000').setVerticalAlignment('top').setWrap(true);
+  Object.keys(d.widths).forEach(function (L) { sh.setColumnWidth(colNum_(L), d.widths[L]); });
+  try { cache_().remove('DEPS'); } catch (e) {}
+  return sh;
+}
+
 function sheet_(name) {
   var sh = ss_().getSheetByName(name);
+  if (!sh && AUTO_SHEETS[name]) sh = createAutoSheet_(name);
   if (!sh) throw new Error('Không tìm thấy tab ' + name);
   return sh;
+}
+
+/** Chạy tay (tùy chọn): tạo sẵn tab QL_TASK trên Sheet. */
+function setupTaskSheet() {
+  sheet_('QL_TASK');
+  return 'Đã có tab QL_TASK';
 }
 
 function dec_(v) {
@@ -456,5 +494,6 @@ function setPasscode() {
 
 /* ============================ TIỆN ÍCH ============================ */
 
+function colNum_(L) { var n = 0; for (var i = 0; i < L.length; i++) n = n * 26 + L.charCodeAt(i) - 64; return n; }
 function colLetter_(n) { var s = ''; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 function fmtDT_(d) { return Utilities.formatDate(d, CFG.TZ, 'dd/MM/yyyy HH:mm'); }

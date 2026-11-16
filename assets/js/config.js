@@ -17,6 +17,7 @@ window.APP_CONFIG = {
 
 /* Nhóm menu */
 window.NAV_GROUPS = [
+  { id: 'ql', title: 'Dành cho Quản lý' },
   { id: 'dm', title: 'Danh mục (GĐ1)' },
   { id: 'nx', title: 'Nhập – Xuất – Tồn (GĐ2)' },
   { id: 'kh', title: 'Định mức & Kế hoạch (GĐ3)' },
@@ -35,6 +36,9 @@ window.NAV_GROUPS = [
  * side: bảng phụ bên phải sheet
  */
 window.SCHEMA = {
+  // Dành cho Quản lý – tab do web tạo trên Sheet (always: hiện trong menu kể cả khi Sheet chưa có tab)
+  QL_TASK: { title: 'Task', icon: 'task', group: 'ql', type: 'task', headerRow: 4, dataStart: 5, khoCol: 'D', addRow: true, always: true },
+
   HUONG_DAN: { title: 'Hướng dẫn sử dụng', icon: 'book', group: 'other', type: 'doc' },
   DASHBOARD: { title: 'Dashboard (Sheet)', icon: 'chart', group: 'other', type: 'report', headerRow: 4, dataStart: 5 },
 

@@ -270,6 +270,39 @@ table.tbl { border-collapse: separate; border-spacing: 0; width: 100%; font-size
 .code-inline { font-family: ui-monospace, Consolas, monospace; background: var(--surface-2); padding: 2px 6px; border-radius: 5px; font-size: 12px; border: 1px solid var(--line); }
 
 /* ---------- Responsive ---------- */
+/* ---------- Task – Dành cho Quản lý ---------- */
+.task-alert { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 10px 14px; border-radius: 10px; background: var(--amber-soft); color: var(--amber); font-size: 13px; cursor: pointer; border: 1px solid transparent; }
+.task-alert.red { background: var(--red-soft); color: var(--red); }
+.task-alert:hover, .task-alert:focus-visible { border-color: currentColor; outline: none; }
+.task-alert svg { width: 18px; height: 18px; flex: none; }
+.task-alert .go { margin-left: auto; font-weight: 700; white-space: nowrap; }
+.tcount { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 99px; background: var(--red); color: #fff; font-size: 11px; line-height: 17px; text-align: center; }
+.tab.active .tcount { background: #fff; color: var(--brand-strong); }
+.tgroup + .tgroup { border-top: 1px solid var(--line); }
+.tgroup-h { display: flex; align-items: center; gap: 10px; padding: 12px 16px 4px; font-size: 12.5px; }
+.task-item { cursor: pointer; align-items: flex-start !important; }
+.task-item:hover { background: var(--surface-2); }
+.task-item.is-late { box-shadow: inset 3px 0 0 var(--red); }
+.task-item.is-done .t { text-decoration: line-through; color: var(--muted); }
+.task-item .t { white-space: normal !important; }
+.tmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 5px; color: var(--muted); font-size: 12px; }
+.tmeta .late { color: var(--red); font-weight: 700; }
+.tcheck { flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); color: #fff; font-weight: 800; font-size: 13px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+.tcheck:hover { border-color: var(--green); }
+.tcheck.on { background: var(--green); border-color: var(--green); }
+.tprog { display: inline-block; width: 64px; height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; vertical-align: middle; }
+.tprog i { display: block; height: 100%; background: var(--green); border-radius: 99px; }
+.tprog.big { display: block; width: 100%; height: 8px; margin: 0 0 10px; }
+.req { color: var(--red); }
+.input.bad { border-color: var(--red) !important; box-shadow: 0 0 0 3px var(--red-soft); }
+.quick-due { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ck { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ck input[type="checkbox"] { width: 18px; height: 18px; flex: none; accent-color: var(--green); }
+.ck .ck-t { flex: 1; }
+.ck.on .ck-t { text-decoration: line-through; color: var(--muted); }
+.ck-add { display: flex; gap: 8px; }
+.ck-add .input { flex: 1; }
+
 @media (max-width: 1100px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kho-cards { grid-template-columns: 1fr; } }
 @media (max-width: 900px) {
   .only-mobile { display: inline-grid; }

@@ -103,7 +103,8 @@
     image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/>',
-    file: '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/>'
+    file: '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/>',
+    task: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8l1.5 1.5L12 7M8 14l1.5 1.5L12 13M14 8.5h3M14 14.5h3"/>'
   };
   const icon = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${IC[n] || IC.file}</svg>`;
 
@@ -330,6 +331,7 @@
   // Sau khi có dữ liệu mới: áp lại thay đổi chưa gửi, lưu đệm, vẽ lại
   function afterData(rev) {
     state.rev = rev; state.mode = 'live'; state.online = true; state.authFail = false; state.lastSync = new Date();
+    ensureLocalSheets();
     state.queue.forEach(applyLocal);
     saveCache(); fillDatalists(); buildNav(); updateBanner();
     setSync(state.queue.length ? 'busy' : 'ok');
@@ -415,7 +417,12 @@
       const items = order.filter(n => schemaOf(n).group === g.id);
       if (!items.length) return;
       h += `<div class="nav-sec">${esc(g.title)}</div>`;
-      items.forEach(n => { const sc = schemaOf(n); h += a('#/sheet/' + encodeURIComponent(n), icon(sc.icon), sc.title); });
+      items.forEach(n => {
+        const sc = schemaOf(n);
+        let extra = '';
+        if (sc.type === 'task' && state.data) { const c = taskCounts(state.kho === 'ALL' ? null : state.kho); const m = c.overdue + c.today; if (m) extra = `<span class="cnt" title="Quá hạn + đến hạn hôm nay">${m}</span>`; }
+        h += a('#/sheet/' + encodeURIComponent(n), icon(sc.icon), sc.title, extra);
+      });
     });
     h += '<div class="nav-sec">Hệ thống</div>';
     h += a('#/hinh-anh', icon('image'), 'Thư viện hình ảnh', state.images.length ? `<span class="cnt" style="background:#2b6f68">${state.images.length}</span>` : '');
@@ -447,12 +454,12 @@
     const view = $('#view');
     if (!state.data) { view.innerHTML = '<div class="empty">Đang tải…</div>'; return; }
     let m;
-    if ((m = /^#\/kho\/(.+)$/.exec(h))) renderKho(view, m[1]);
+    if ((m = /^#\/kho\/(.+)$/.exec(h))) { renderKho(view, m[1]); taskAlert(view, m[1]); }
     else if ((m = /^#\/sheet\/(.+)$/.exec(h))) renderSheet(view, m[1]);
     else if (h === '#/hinh-anh') renderGallery(view);
     else if (h === '#/nhat-ky') renderLog(view);
     else if (h === '#/cai-dat') renderSettings(view);
-    else renderOverview(view);
+    else { renderOverview(view); taskAlert(view, state.kho === 'ALL' ? null : state.kho); }
     if (keepScroll) window.scrollTo(0, y); else window.scrollTo(0, 0);
   }
 
@@ -756,6 +763,7 @@
     setCrumb(sc.title, name);
     const desc = String(val(name, 2, 1) || '');
     if (sc.type === 'doc') return renderDoc(view, name);
+    if (sc.type === 'task') return renderTasks(view);
     if (sc.type === 'report') {
       view.innerHTML = `<div class="card"><div class="card-h"><h3>${esc(val(name, 1, 1))}</h3><span class="sub">${esc(desc)}</span></div>${reportTable(name, sc.headerRow)}</div>`;
       return;
@@ -1274,6 +1282,345 @@
     listBk();
   }
 
+  /* ------------------------------------------------------------------ TASK – Dành cho Quản lý
+   * Dữ liệu ở tab QL_TASK của Google Sheet (Apps Script tự tạo tab ở lần ghi đầu tiên).
+   * Chống bỏ sót: bắt buộc người phụ trách + hạn chót, nhóm theo hạn (quá hạn đứng đầu),
+   * cảnh báo ở menu / Tổng quan / trang kho, checklist con với % hoàn thành. */
+  const TASK = 'QL_TASK';
+  const TK = { id: 1, title: 2, desc: 3, kho: 4, owner: 5, by: 6, prio: 7, start: 8, due: 9, status: 10, check: 11, doneAt: 12, note: 13, upd: 14 };
+  const T_HEAD = ['Mã task', 'Tiêu đề', 'Mô tả', 'Kho', 'Người phụ trách', 'Người giao', 'Ưu tiên', 'Ngày giao', 'Hạn chót', 'Trạng thái', 'Checklist', 'Ngày hoàn thành', 'Kết quả / ghi chú', 'Cập nhật lần cuối'];
+  const T_STATUS = ['Chưa làm', 'Đang làm', 'Chờ duyệt', 'Tạm hoãn', 'Hoàn thành', 'Hủy'];
+  const T_DONE = ['Hoàn thành', 'Hủy'];
+  const T_PRIO = ['Gấp', 'Cao', 'Trung bình', 'Thấp'];
+  const T_KHO = ['Chung', ...KHO_CODES];
+  const T_BUCKETS = [
+    ['overdue', 'Quá hạn', 'red'], ['today', 'Hôm nay', 'amber'], ['tomorrow', 'Ngày mai', 'amber'],
+    ['week', 'Trong 7 ngày tới', 'blue'], ['later', 'Sau đó', ''], ['nodue', 'Chưa có hạn chót – dễ bị sót', 'red'], ['done', 'Đã xong / đã hủy', 'green']
+  ];
+
+  /** Tab do web tạo: nếu Sheet chưa có thì dựng bản trống trên máy để vẫn xem/nhập được. */
+  function ensureLocalSheets() {
+    if (!state.data || !state.data.sheets) return;
+    if (!state.data.sheets[TASK]) {
+      state.data.sheets[TASK] = {
+        v: [['QUẢN LÝ TASK – CỤM M12'], ['Dành cho Quản lý · Mỗi dòng 1 task.'], [], T_HEAD.slice()], fm: [],
+        dv: { D5: T_KHO, G5: T_PRIO, J5: T_STATUS }, local: true
+      };
+    }
+    if (state.data.order && !state.data.order.includes(TASK)) state.data.order.unshift(TASK);
+  }
+
+  function parseChecklist(s) {
+    return String(s || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean).map(line => {
+      const m = /^\[( |x|X)\]\s*(.*)$/.exec(line);
+      return m ? { done: m[1] !== ' ', text: m[2] } : { done: false, text: line };
+    });
+  }
+  const checklistText = items => items.filter(i => i.text.trim()).map(i => `[${i.done ? 'x' : ' '}] ${i.text.trim()}`).join('\n');
+
+  function taskList() {
+    const s = sh(TASK); if (!s) return [];
+    const out = [];
+    for (let r = 5; r <= s.v.length; r++) {
+      const g = c => val(TASK, r, c);
+      const title = plain(g(TK.title)).trim();
+      if (!title && !plain(g(TK.id))) continue;
+      const status = plain(g(TK.status)) || 'Chưa làm';
+      out.push({
+        r, id: plain(g(TK.id)), title: title || '(chưa có tiêu đề)', desc: plain(g(TK.desc)), kho: plain(g(TK.kho)) || 'Chung',
+        owner: plain(g(TK.owner)).trim(), by: plain(g(TK.by)), prio: plain(g(TK.prio)) || 'Trung bình',
+        start: toDate(g(TK.start), true), due: toDate(g(TK.due), true), status, items: parseChecklist(plain(g(TK.check))),
+        doneAt: toDate(g(TK.doneAt), true), note: plain(g(TK.note)), upd: plain(g(TK.upd)), done: T_DONE.includes(status)
+      });
+    }
+    return out;
+  }
+  const daysLeft = t => t.due ? Math.round((t.due - today0()) / 86400000) : null;
+  function bucketOf(t) {
+    if (t.done) return 'done';
+    const d = daysLeft(t);
+    if (d === null) return 'nodue';
+    if (d < 0) return 'overdue';
+    if (d === 0) return 'today';
+    if (d === 1) return 'tomorrow';
+    return d <= 7 ? 'week' : 'later';
+  }
+  const inKhoScope = (t, k) => !k || t.kho === k || t.kho === 'Chung';
+  function taskCounts(k) {
+    const c = { overdue: 0, today: 0, week: 0, doing: 0, missing: 0, open: 0, doneMonth: 0, onTime: 0 };
+    const t0 = today0(), m0 = new Date(t0.getFullYear(), t0.getMonth(), 1);
+    taskList().filter(t => inKhoScope(t, k)).forEach(t => {
+      const b = bucketOf(t);
+      if (!t.done) {
+        c.open++;
+        if (b === 'overdue') c.overdue++;
+        if (b === 'today') c.today++;
+        if (b === 'today' || b === 'tomorrow' || b === 'week') c.week++;
+        if (t.status === 'Đang làm') c.doing++;
+        if (!t.owner || !t.due) c.missing++;
+      } else if (t.status === 'Hoàn thành' && t.doneAt && t.doneAt >= m0) {
+        c.doneMonth++;
+        if (!t.due || t.doneAt <= t.due) c.onTime++;
+      }
+    });
+    return c;
+  }
+  const meKey = () => String(state.user || '').split(/[\/–]| - /)[0].trim().toLowerCase();
+  const isMine = t => { const me = meKey(); return !!me && t.owner.toLowerCase().includes(me); };
+
+  function taskAlert(view, k) {
+    if (!sh(TASK)) return;
+    const c = taskCounts(k);
+    if (!c.overdue && !c.today && !c.missing) return;
+    const parts = [];
+    if (c.overdue) parts.push(`<b>${c.overdue}</b> quá hạn`);
+    if (c.today) parts.push(`<b>${c.today}</b> đến hạn hôm nay`);
+    if (c.missing) parts.push(`<b>${c.missing}</b> thiếu người phụ trách / hạn chót`);
+    const go = k ? `kho:|${k}|#/sheet/${TASK}` : `#/sheet/${TASK}`;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `<div class="task-alert ${c.overdue ? 'red' : ''}" data-go="${esc(go)}" role="link" tabindex="0">${icon('task')}<span>Task${k ? ' · ' + esc(k) : ''}: ${parts.join(' · ')}</span><span class="go">Xem task →</span></div>`;
+    view.prepend(wrap);
+    bindGo(wrap);
+  }
+
+  const tvs = () => state.views.__task || (state.views.__task = { q: '', tab: 'open', group: 'due', owner: '' });
+
+  function renderTasks(view) {
+    setCrumb('Task', 'Dành cho Quản lý');
+    const vs = tvs(), k = state.kho === 'ALL' ? null : state.kho;
+    const all = taskList().filter(t => inKhoScope(t, k));
+    const c = taskCounts(k);
+    const owners = [...new Set(taskList().map(t => t.owner).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'));
+    const tabs = [['open', 'Cần làm', c.open], ['mine', 'Của tôi', null], ['overdue', 'Quá hạn', c.overdue], ['today', 'Hôm nay', c.today], ['week', '7 ngày tới', c.week], ['done', 'Đã xong', null], ['all', 'Tất cả', null]];
+    const s = sh(TASK);
+    view.innerHTML = `
+      <div class="kpis">
+        ${kpi('Quá hạn', c.overdue, 'Chưa xong, đã qua hạn chót', c.overdue ? 'red' : 'green')}
+        ${kpi('Đến hạn hôm nay', c.today, `${c.week} task trong 7 ngày tới`, c.today ? 'amber' : '')}
+        ${kpi('Đang làm', c.doing, `${c.open} task chưa xong`, 'blue')}
+        ${kpi('Dễ bị sót', c.missing, 'Thiếu người phụ trách hoặc hạn chót', c.missing ? 'red' : 'green')}
+        ${kpi('Hoàn thành tháng này', c.doneMonth, c.doneMonth ? `${Math.round(c.onTime / c.doneMonth * 100)}% đúng hạn` : 'Chưa có', 'green')}
+      </div>
+      <div class="card mt">
+        <div class="card-h"><div><h3>Danh sách task</h3><div class="sub" style="margin-top:3px">Quá hạn luôn ở trên cùng · bấm vào task để xem chi tiết, checklist và ảnh${s && s.local ? ' · <b>Sheet chưa có tab QL_TASK – sẽ tự tạo khi thêm task đầu tiên</b>' : ''}</div></div>
+          <div class="right">${k ? `<span class="chip brand">Đang lọc kho: ${esc(k)} + Chung</span>` : ''}<button class="btn primary" id="tNew">＋ Task mới</button></div></div>
+        <div class="toolbar">
+          <div class="tabs">${tabs.filter(t => t[0] !== 'mine' || meKey()).map(t => `<button class="tab ${vs.tab === t[0] ? 'active' : ''}" data-tab="${t[0]}">${t[1]}${t[2] ? ` <span class="tcount">${t[2]}</span>` : ''}</button>`).join('')}</div>
+        </div>
+        <div class="toolbar">
+          <div class="search"><input class="input" id="tq" placeholder="Tìm task, mô tả, checklist…" value="${esc(vs.q)}"></div>
+          <select class="select" id="tOwner"><option value="">Mọi người phụ trách</option>${owners.map(o => `<option ${vs.owner === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>
+          <div class="right"><label class="muted" for="tGroup" style="font-size:12.5px">Nhóm theo</label>
+            <select class="select" id="tGroup">${[['due', 'Hạn chót'], ['owner', 'Người phụ trách'], ['kho', 'Kho'], ['status', 'Trạng thái'], ['prio', 'Ưu tiên']].map(o => `<option value="${o[0]}" ${vs.group === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
+            <button class="btn" id="tCsv" title="Xuất toàn bộ task ra Excel (CSV)">⭳ Xuất Excel</button></div>
+        </div>
+        <div id="tBody"></div>
+      </div>`;
+    const draw = () => { $('#tBody').innerHTML = taskGroupsHtml(filterTasks(all, vs), vs.group); bindTaskItems(); };
+    draw();
+    $$('[data-tab]', view).forEach(b => b.onclick = () => { vs.tab = b.dataset.tab; renderTasks(view); });
+    $('#tq').addEventListener('input', debounce(e => { vs.q = e.target.value; draw(); }, 200));
+    $('#tOwner').onchange = e => { vs.owner = e.target.value; draw(); };
+    $('#tGroup').onchange = e => { vs.group = e.target.value; draw(); };
+    $('#tNew').onclick = () => openTaskDrawer(null);
+    $('#tCsv').onclick = () => exportCSV(tableDef(TASK));
+  }
+
+  function filterTasks(list, vs) {
+    const q = vs.q.trim().toLowerCase();
+    return list.filter(t => {
+      const b = bucketOf(t);
+      if (vs.tab === 'open' && t.done) return false;
+      if (vs.tab === 'mine' && (t.done || !isMine(t))) return false;
+      if (vs.tab === 'overdue' && b !== 'overdue') return false;
+      if (vs.tab === 'today' && b !== 'today') return false;
+      if (vs.tab === 'week' && !['today', 'tomorrow', 'week'].includes(b)) return false;
+      if (vs.tab === 'done' && !t.done) return false;
+      if (vs.owner && t.owner !== vs.owner) return false;
+      if (q && ![t.id, t.title, t.desc, t.owner, t.note, t.items.map(i => i.text).join(' ')].join(' ').toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+
+  function taskSort(a, b) {
+    const pa = T_PRIO.indexOf(a.prio), pb = T_PRIO.indexOf(b.prio);
+    const da = a.due ? +a.due : Infinity, db = b.due ? +b.due : Infinity;
+    return (a.done - b.done) || (da - db) || (pa - pb) || (a.r - b.r);
+  }
+
+  function taskGroupsHtml(list, group) {
+    if (!list.length) return '<div class="empty">Không có task nào trong mục này. 🎉</div>';
+    let groups;
+    if (group === 'due') groups = T_BUCKETS.map(([key, label, cls]) => ({ label, cls, items: list.filter(t => bucketOf(t) === key) }));
+    else {
+      const keyOf = t => group === 'owner' ? (t.owner || '⚠ Chưa giao người') : group === 'kho' ? t.kho : group === 'status' ? t.status : t.prio;
+      const order = group === 'status' ? T_STATUS : group === 'prio' ? T_PRIO : group === 'kho' ? T_KHO : null;
+      const keys = [...new Set(list.map(keyOf))].sort((a, b) => order ? order.indexOf(a) - order.indexOf(b) : a.localeCompare(b, 'vi'));
+      groups = keys.map(key => ({ label: key, cls: key.startsWith('⚠') ? 'red' : '', items: list.filter(t => keyOf(t) === key) }));
+    }
+    return groups.filter(g => g.items.length).map(g => `
+      <div class="tgroup"><div class="tgroup-h"><span class="chip ${g.cls}">${esc(g.label)}</span><span class="muted">${g.items.length} task</span></div>
+      <ul class="list">${g.items.sort(taskSort).map(taskItemHtml).join('')}</ul></div>`).join('');
+  }
+
+  function taskItemHtml(t) {
+    const d = daysLeft(t), b = bucketOf(t);
+    const dueTxt = !t.due ? '<span class="chip red">Chưa có hạn</span>'
+      : `<span class="${b === 'overdue' ? 'late' : ''}">📅 ${dmy(isoOf(t.due))}${t.done ? '' : d < 0 ? ` · trễ ${-d} ngày` : d === 0 ? ' · hôm nay' : d === 1 ? ' · ngày mai' : ` · còn ${d} ngày`}</span>`;
+    const n = t.items.length, nd = t.items.filter(i => i.done).length;
+    const prioCls = t.prio === 'Gấp' ? 'red' : t.prio === 'Cao' ? 'amber' : '';
+    const imgs = state.images.filter(im => im.sheet === TASK && +im.row === t.r).length;
+    return `<li class="task-item ${b === 'overdue' ? 'is-late' : ''} ${t.done ? 'is-done' : ''}" data-r="${t.r}">
+      <button class="tcheck ${t.done ? 'on' : ''}" data-done="${t.r}" title="${t.done ? 'Mở lại task' : 'Đánh dấu hoàn thành'}" aria-label="${t.done ? 'Mở lại task' : 'Đánh dấu hoàn thành'}">${t.done ? '✓' : ''}</button>
+      <div class="grow">
+        <div class="t">${t.id ? `<span class="muted">${esc(t.id)}</span> ` : ''}${esc(t.title)}</div>
+        <div class="tmeta">
+          <span class="chip ${chipClass(t.status) || ''}">${esc(t.status)}</span>
+          ${t.prio !== 'Trung bình' ? `<span class="chip ${prioCls}">${esc(t.prio)}</span>` : ''}
+          <span class="chip" ${khoInfo(t.kho).color && t.kho !== 'Chung' ? `style="border-color:${khoInfo(t.kho).color}"` : ''}>${esc(t.kho)}</span>
+          ${t.owner ? `<span>👤 ${esc(t.owner)}</span>` : '<span class="chip red">Chưa giao người</span>'}
+          ${dueTxt}
+          ${n ? `<span class="tprog" title="Checklist ${nd}/${n}"><i style="width:${Math.round(nd / n * 100)}%"></i></span><span>${nd}/${n}</span>` : ''}
+          ${imgs ? `<span>📷 ${imgs}</span>` : ''}
+        </div>
+      </div></li>`;
+  }
+
+  function bindTaskItems() {
+    $$('#tBody .task-item').forEach(li => li.addEventListener('click', e => { if (e.target.closest('[data-done]')) return; openTaskDrawer(+li.dataset.r); }));
+    $$('#tBody [data-done]').forEach(b => b.onclick = () => {
+      const t = taskList().find(x => x.r === +b.dataset.done); if (!t) return;
+      if (!t.done) {
+        const left = t.items.filter(i => !i.done).length;
+        if (left && !confirm(`Checklist còn ${left} bước chưa xong. Vẫn đánh dấu hoàn thành?`)) return;
+        saveTask(t.r, { [TK.status]: 'Hoàn thành', [TK.doneAt]: isoOf(new Date()) });
+        toast('Đã hoàn thành: ' + t.title);
+      } else {
+        saveTask(t.r, { [TK.status]: 'Đang làm', [TK.doneAt]: '' });
+        toast('Đã mở lại task');
+      }
+      route(true);
+    });
+  }
+
+  function stampNow() { const d = new Date(); return `${dmy(isoOf(d))} ${pad(d.getHours())}:${pad(d.getMinutes())} · ${state.user || 'Không tên'}`; }
+
+  function nextTaskId() {
+    let max = 0;
+    taskList().forEach(t => { const m = /^T-(\d+)$/.exec(t.id); if (m) max = Math.max(max, +m[1]); });
+    return 'T-' + String(max + 1).padStart(4, '0');
+  }
+
+  /** Ghi task: r = null → thêm mới; fields = { cột: giá trị } */
+  function saveTask(r, fields) {
+    fields = { ...fields, [TK.upd]: stampNow() };
+    if (!r) {
+      const values = {};
+      Object.keys(fields).forEach(c => { if (fields[c] !== '' && fields[c] != null) values[c] = fields[c]; });
+      const op = enqueue('append', { sheet: TASK, values, dataStart: 5, lastCol: T_HEAD.length });
+      return op.payload._row;
+    }
+    const changes = [];
+    Object.keys(fields).forEach(c => {
+      const cur = val(TASK, r, +c), ft = [TK.start, TK.due, TK.doneAt].includes(+c) ? { t: 'date' } : { t: 'text' };
+      if (String(fields[c]) !== String(inputValue(cur, ft))) changes.push({ row: r, col: +c, value: fields[c] });
+    });
+    if (changes.length > 1 || (changes.length && changes[0].col !== TK.upd)) enqueue('update', { sheet: TASK, changes });
+    return r;
+  }
+
+  function openTaskDrawer(r, preset) {
+    const t = r ? taskList().find(x => x.r === r) : null;
+    const isNew = !t, k = state.kho === 'ALL' ? 'Chung' : state.kho;
+    const owners = [...new Set(taskList().map(x => x.owner).filter(Boolean))];
+    const v = {
+      title: t ? t.title : '', desc: t ? t.desc : '', kho: t ? t.kho : k, owner: t ? t.owner : '', by: t ? t.by : (state.user || ''),
+      prio: t ? t.prio : 'Trung bình', start: t && t.start ? isoOf(t.start) : isoOf(new Date()), due: t && t.due ? isoOf(t.due) : '',
+      status: t ? t.status : 'Chưa làm', note: t ? t.note : '', ...(preset || {})
+    };
+    let items = t ? t.items.map(i => ({ ...i })) : [];
+    const opt = (list, cur) => list.map(o => `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('') + (cur && !list.includes(cur) ? `<option selected>${esc(cur)}</option>` : '');
+    const body = `
+      ${t ? `<div class="muted" style="margin-bottom:12px">${esc(t.id || 'Dòng ' + t.r)}${t.upd ? ' · cập nhật ' + esc(t.upd) : ''}${t.doneAt ? ' · hoàn thành ' + dmy(isoOf(t.doneAt)) : ''}</div>` : ''}
+      <div class="form">
+        <div class="field full"><label for="tTitle">Tiêu đề task <span class="req">*</span></label><input class="input" id="tTitle" value="${esc(v.title)}" placeholder="VD: Kiểm kê tháng 11 – kho TK"></div>
+        <div class="field"><label for="tOwnerI">Người phụ trách <span class="req">*</span></label><input class="input" id="tOwnerI" list="dl-owner" value="${esc(v.owner)}" placeholder="Họ tên"><datalist id="dl-owner">${owners.map(o => `<option value="${esc(o)}">`).join('')}</datalist></div>
+        <div class="field"><label for="tDue">Hạn chót <span class="req">*</span></label><input class="input" id="tDue" type="date" value="${esc(v.due)}">
+          <div class="quick-due">${[['Hôm nay', 0], ['Ngày mai', 1], ['+3 ngày', 3], ['+7 ngày', 7], ['Cuối tháng', 'eom']].map(q => `<button type="button" class="btn sm" data-due="${q[1]}">${q[0]}</button>`).join('')}</div></div>
+        <div class="field"><label for="tStatus">Trạng thái</label><select class="select" id="tStatus">${opt(T_STATUS, v.status)}</select></div>
+        <div class="field"><label for="tPrio">Ưu tiên</label><select class="select" id="tPrio">${opt(T_PRIO, v.prio)}</select></div>
+        <div class="field"><label for="tKho">Kho</label><select class="select" id="tKho">${opt(T_KHO, v.kho)}</select></div>
+        <div class="field"><label for="tBy">Người giao</label><input class="input" id="tBy" value="${esc(v.by)}"></div>
+        <div class="field"><label for="tStart">Ngày giao</label><input class="input" id="tStart" type="date" value="${esc(v.start)}"></div>
+        <div class="field full"><label for="tDesc">Mô tả / yêu cầu</label><textarea id="tDesc" placeholder="Cần làm gì, kết quả mong muốn">${esc(v.desc)}</textarea></div>
+      </div>
+      <div class="sec-title">☑ Checklist các bước <span class="chip" id="ckCount"></span></div>
+      <div class="tprog big"><i id="ckBar"></i></div>
+      <div id="ckList"></div>
+      <div class="ck-add"><input class="input" id="ckNew" placeholder="Thêm bước… (Enter để thêm)"><button class="btn" id="ckAddBtn" type="button">＋ Thêm bước</button></div>
+      <div class="form mt"><div class="field full"><label for="tNote">Kết quả / ghi chú</label><textarea id="tNote" placeholder="Kết quả, vướng mắc, link tài liệu…">${esc(v.note)}</textarea></div></div>
+      ${t ? `<div class="sec-title" id="imgSec">📷 Hình ảnh / bằng chứng <span class="chip" id="imgCount"></span></div>
+        <div class="gallery" id="imgGrid"></div>
+        <label class="upload mt" id="upl"><input type="file" accept="image/*" multiple id="imgInput"><b>Bấm để chọn ảnh</b> hoặc kéo thả vào đây<br><small>Trên điện thoại có thể chụp trực tiếp · ảnh tự nén ≤ 1600px</small></label>` : ''}`;
+    openDrawer(isNew ? 'Task mới' : 'Chi tiết task', body,
+      `${t ? '<button class="btn danger" id="tDel">🗑 Xóa task</button>' : ''}<span style="flex:1"></span><button class="btn" data-close>Đóng</button><button class="btn primary" id="tSave">${isNew ? '＋ Tạo task' : '💾 Lưu'}</button>`);
+
+    const drawCk = () => {
+      const n = items.length, nd = items.filter(i => i.done).length;
+      $('#ckCount').textContent = n ? `${nd}/${n} · ${Math.round(nd / n * 100)}%` : 'chưa có bước';
+      $('#ckBar').style.width = n ? Math.round(nd / n * 100) + '%' : '0';
+      $('#ckList').innerHTML = items.map((i, idx) => `<div class="ck ${i.done ? 'on' : ''}"><input type="checkbox" data-i="${idx}" ${i.done ? 'checked' : ''} aria-label="Đánh dấu xong bước ${idx + 1}"><input class="input ck-t" data-t="${idx}" value="${esc(i.text)}"><button type="button" class="icon-btn ck-del" data-x="${idx}" title="Xóa bước" aria-label="Xóa bước">✕</button></div>`).join('') || '<div class="muted" style="padding:4px 0 8px">Chia task thành các bước nhỏ để không sót việc.</div>';
+      $$('#ckList [data-i]').forEach(cb => cb.onchange = () => { items[+cb.dataset.i].done = cb.checked; drawCk(); });
+      $$('#ckList [data-t]').forEach(inp => inp.oninput = () => { items[+inp.dataset.t].text = inp.value; });
+      $$('#ckList [data-x]').forEach(b => b.onclick = () => { items.splice(+b.dataset.x, 1); drawCk(); });
+    };
+    ['tTitle', 'tOwnerI', 'tDue'].forEach(id => $('#' + id).addEventListener('input', e => e.target.classList.remove('bad')));
+    const addCk = () => { const el = $('#ckNew'); const s = el.value.trim(); if (!s) return; items.push({ done: false, text: s }); el.value = ''; drawCk(); el.focus(); };
+    drawCk();
+    $('#ckAddBtn').onclick = addCk;
+    $('#ckNew').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addCk(); } });
+    $$('[data-due]').forEach(b => b.onclick = () => {
+      const d = today0();
+      if (b.dataset.due === 'eom') d.setMonth(d.getMonth() + 1, 0); else d.setDate(d.getDate() + Number(b.dataset.due));
+      $('#tDue').value = isoOf(d);
+    });
+
+    $('#tSave').onclick = () => {
+      const f = {
+        [TK.title]: $('#tTitle').value.trim(), [TK.desc]: $('#tDesc').value.trim(), [TK.kho]: $('#tKho').value, [TK.owner]: $('#tOwnerI').value.trim(),
+        [TK.by]: $('#tBy').value.trim(), [TK.prio]: $('#tPrio').value, [TK.start]: $('#tStart').value, [TK.due]: $('#tDue').value,
+        [TK.status]: $('#tStatus').value, [TK.check]: checklistText(items), [TK.note]: $('#tNote').value.trim()
+      };
+      const miss = [];
+      if (!f[TK.title]) miss.push(['tTitle', 'tiêu đề']);
+      if (!f[TK.owner]) miss.push(['tOwnerI', 'người phụ trách']);
+      if (!f[TK.due]) miss.push(['tDue', 'hạn chót']);
+      $$('.input.bad', $('#drawerBody')).forEach(el => el.classList.remove('bad'));
+      if (miss.length) {
+        miss.forEach(m => $('#' + m[0]).classList.add('bad'));
+        toast('Cần nhập ' + miss.map(m => m[1]).join(', ') + ' để task không bị sót', 'warn');
+        $('#' + miss[0][0]).focus();
+        return;
+      }
+      const wasDone = t && t.done, nowDone = T_DONE.includes(f[TK.status]);
+      if (nowDone && !wasDone) {
+        const left = items.filter(i => !i.done && i.text.trim()).length;
+        if (f[TK.status] === 'Hoàn thành' && left && !confirm(`Checklist còn ${left} bước chưa xong. Vẫn lưu là Hoàn thành?`)) return;
+        f[TK.doneAt] = isoOf(new Date());
+      } else if (!nowDone && wasDone) f[TK.doneAt] = '';
+      if (isNew) { f[TK.id] = nextTaskId(); saveTask(null, f); toast(`Đã tạo task ${f[TK.id]}`); }
+      else { saveTask(t.r, f); toast('Đã lưu task'); }
+      closeDrawer(); route(true);
+    };
+    if ($('#tDel')) $('#tDel').onclick = () => {
+      if (!confirm(`Xóa task “${t.title}”?\nDòng ${t.r} trên tab QL_TASK sẽ được xóa nội dung.`)) return;
+      enqueue('clearRow', { sheet: TASK, row: t.r, lastCol: T_HEAD.length });
+      toast('Đã xóa task'); closeDrawer(); route(true);
+    };
+    if (t) { drawImages(TASK, t.r); bindUpload(tableDef(TASK), t.r); }
+    setTimeout(() => $('#tTitle').focus(), 250);
+  }
+
   /* ------------------------------------------------------------------ export */
   function download(name, content, type) {
     const blob = new Blob([content], { type }); const a = document.createElement('a');
@@ -1340,6 +1687,7 @@
     const cache = state.apiUrl ? LS.get('cache', null) : null;
     if (cache && cache.data) { state.data = cache.data; state.images = cache.images || []; state.rev = cache.rev; state.mode = 'cache'; }
     else { state.data = JSON.parse(JSON.stringify(window.SNAPSHOT)); state.mode = 'snapshot'; }
+    ensureLocalSheets();
     state.queue.forEach(applyLocal);
     fillDatalists(); updateBanner(); setSync(state.apiUrl ? 'busy' : '');
     route(false);
