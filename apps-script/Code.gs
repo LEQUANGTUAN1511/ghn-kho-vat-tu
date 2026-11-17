@@ -506,6 +506,7 @@ function update_(p) {
     log_(p, 'Sửa', sh.getName(), cell.getA1Notation(), old, String(ch.value));
     done++;
   });
+  if (sh.getName() === PDA_SHEET) { try { syncPdaSummary_(sh); } catch (e) {} }
   return { ok: true, updated: done, skipped: skipped };
 }
 
@@ -540,6 +541,7 @@ function append_(p) {
     cell.setValue(nv);
   });
   log_(p, 'Thêm dòng', sh.getName(), 'Dòng ' + target, '', JSON.stringify(p.values));
+  if (sh.getName() === PDA_SHEET) { try { syncPdaSummary_(sh); } catch (e) {} }
   return { ok: true, row: target };
 }
 
@@ -581,7 +583,70 @@ function setList_(p) {
   }
   rng.setDataValidations(rules);
   log_(p, 'Sửa danh sách', sh.getName(), 'Cột ' + p.col, '', values.join(', '));
+  if (sh.getName() === PDA_SHEET) { try { syncPdaSummary_(sh); } catch (e) {} }
   return { ok: true, cells: count, values: values };
+}
+
+/* ---------- Bảng tổng hợp PDA (THONG_KE_PDA, vùng L4:…10) ----------
+ * Mỗi thiết bị 1 cột (tiêu đề dòng 4 = tên thiết bị), cột cuối là "Ngày cập nhật".
+ * Tự thêm cột cho thiết bị mới (có trong dropdown cột D hoặc đã nhập ở bảng chính),
+ * chép công thức từ cột thiết bị bên trái, và sửa dòng "Số lượng thiết bị" cộng đủ các cột. */
+var PDA_SHEET = 'THONG_KE_PDA', PDA_SUM_FIRST = 14 /* N */, PDA_SUM_ROWS = [4, 10];
+
+function syncPdaSummary_(sh) {
+  sh = sh || ss_().getSheetByName(PDA_SHEET);
+  if (!sh) return 'Không có tab ' + PDA_SHEET;
+  var lastC = sh.getMaxColumns(), head = sh.getRange(4, PDA_SUM_FIRST, 1, lastC - PDA_SUM_FIRST + 1).getValues()[0];
+  var dateIdx = -1;
+  for (var i = 0; i < head.length; i++) if (/^ngày cập nhật$/i.test(String(head[i]).trim())) { dateIdx = i; break; }
+  if (dateIdx < 1) return 'Không tìm thấy cột "Ngày cập nhật" ở dòng 4 – bỏ qua';
+  var have = head.slice(0, dateIdx).map(function (x) { return String(x).trim(); });
+  // Thiết bị cần có: theo thứ tự dropdown cột D, rồi các tên đã nhập ở bảng chính
+  var want = [], seen = {};
+  var add = function (x) { x = String(x || '').trim(); if (x && !seen[x.toLowerCase()]) { seen[x.toLowerCase()] = true; want.push(x); } };
+  try {
+    var dv = sh.getRange('D5').getDataValidation();
+    if (dv && dv.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) dv.getCriteriaValues()[0].forEach(add);
+  } catch (e) {}
+  sh.getRange('D5:D204').getValues().forEach(function (r) { add(r[0]); });
+  var lower = have.map(function (x) { return x.toLowerCase(); });
+  var missing = want.filter(function (x) { return lower.indexOf(x.toLowerCase()) < 0; });
+  var nRows = PDA_SUM_ROWS[1] - PDA_SUM_ROWS[0] + 1, added = [];
+  missing.forEach(function (name) {
+    var dateCol = PDA_SUM_FIRST + have.length;          // cột "Ngày cập nhật" hiện tại
+    var newCol = sh.getRange(PDA_SUM_ROWS[0], dateCol, nRows, 1);
+    newCol.insertCells(SpreadsheetApp.Dimension.COLUMNS);   // chỉ đẩy vùng dòng 4–10 sang phải
+    if (sh.getMaxColumns() < dateCol + 1) sh.insertColumnsAfter(sh.getMaxColumns(), 1);
+    var src = sh.getRange(PDA_SUM_ROWS[0], dateCol - 1, nRows, 1), dst = sh.getRange(PDA_SUM_ROWS[0], dateCol, nRows, 1);
+    src.copyTo(dst);                                          // công thức tự đổi N$4 → cột mới
+    dst.getCell(1, 1).setValue(name);
+    have.push(name); added.push(name);
+  });
+  // Dòng "Số lượng thiết bị (theo kho chọn)": Tốt (dòng 13) và Hư (dòng 14) cộng đủ các cột thiết bị
+  var lastDev = colLetter_(PDA_SUM_FIRST + have.length - 1);
+  var fix = function (label, cell, f) {
+    if (!label.test(String(sh.getRange('M' + cell.slice(1)).getValue()).trim())) return;
+    var c = sh.getRange(cell);
+    if (c.getFormula().replace(/\s/g, '').toUpperCase() !== f.toUpperCase()) c.setFormula(f);
+  };
+  fix(/^tốt$/i, 'N13', '=SUM(N5:' + lastDev + '5)');
+  fix(/^hư/i, 'N14', '=SUM(N6:' + lastDev + '8)');
+  return added.length ? 'Bảng tổng hợp PDA: đã thêm cột ' + added.join(', ') : 'Bảng tổng hợp PDA: đủ cột (' + have.join(', ') + ')';
+}
+
+/** Chạy tay 1 lần (hoặc bất cứ lúc nào): bổ sung cột thiết bị còn thiếu vào Bảng tổng hợp PDA,
+ *  và cho cột Tên thiết bị ở CAP_PHAT_PDA nhận IMEI có/không có chữ "IMEI:" phía trước. */
+function setupV3() {
+  var out = [syncPdaSummary_()];
+  var cp = ss_().getSheetByName('CAP_PHAT_PDA');
+  if (cp) {
+    // Khớp theo phần số của IMEI (bỏ chữ "IMEI:", khoảng trắng…) → quét mã vạch hay gõ có tiền tố đều tìm được
+    cp.getRange('E5:E' + cp.getMaxRows()).setFormulaR1C1('=IF(RC4="","",IF(REGEXREPLACE(RC4&"","[^0-9]","")="","IMEI chưa khai báo",IFERROR(INDEX(THONG_KE_PDA!R5C4:R204C4,MATCH("*"&REGEXREPLACE(RC4&"","[^0-9]",""),ARRAYFORMULA(THONG_KE_PDA!R5C3:R204C3&""),0)),"IMEI chưa khai báo")))');
+    out.push('CAP_PHAT_PDA: đã cập nhật công thức Tên thiết bị');
+  }
+  bumpRev_('*');
+  Logger.log(out.join('\n'));
+  return out.join('\n');
 }
 
 /** Bổ sung hạng mục (cột mới) ở bên phải bảng */

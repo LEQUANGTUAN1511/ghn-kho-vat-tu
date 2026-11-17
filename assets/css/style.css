@@ -326,6 +326,29 @@ table.tbl { border-collapse: separate; border-spacing: 0; width: 100%; font-size
 .chk { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; font-size: 13px; }
 .chk input { margin-top: 2px; accent-color: var(--brand); }
 
+/* ---------- Kiểu chữ & số: bảng, chỉ số ----------
+ * Chữ số đều nhau (tabular) để số thẳng cột; tiêu đề cột số căn phải cùng phía với số;
+ * bỏ chữ nghiêng ở cột tự tính (chỉ dùng nền xám); mũi tên sắp xếp chỉ hiện khi cần. */
+.tbl { font-size: 13px; line-height: 1.45; }
+.tbl th { font-size: 11.5px; font-weight: 600; letter-spacing: .02em; padding: 10px 12px; }
+.tbl th.computed { font-style: normal; }
+.tbl th .sort { opacity: 0; transition: opacity .15s; }
+.tbl th:hover .sort, .tbl th.sorted .sort { opacity: .65; }
+.tbl th.num, .tbl td.num { text-align: right; }
+.tbl th.stt, .tbl td.stt { text-align: center; width: 1%; white-space: nowrap; }
+.tbl td { padding: 9px 12px; }
+.tbl td.num, .tbl td.code, .tbl td.date, .tbl td.stt, .tbl td.rowno { font-variant-numeric: tabular-nums; }
+.tbl td.code { font-weight: 500; letter-spacing: .01em; white-space: nowrap; }
+.tbl td.date { white-space: nowrap; }
+.tbl td.calc { color: var(--muted); }
+.tbl td.rowno { font-size: 11px; text-align: right; color: color-mix(in srgb, var(--muted) 75%, transparent); }
+.tbl .chip { font-size: 11px; padding: 2px 8px; letter-spacing: .02em; }
+.tbl.side td.num { font-weight: 600; }
+.tbl.side tr.total td { font-weight: 700; background: var(--surface-2); border-top: 2px solid var(--line); }
+.pager .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; border-radius: 3px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+.kpi .val { font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.totals, .tmeta, .list li .s, .pager { font-variant-numeric: tabular-nums; }
+
 @media (max-width: 1100px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kho-cards { grid-template-columns: 1fr; } }
 @media (max-width: 900px) {
   .only-mobile { display: inline-grid; }

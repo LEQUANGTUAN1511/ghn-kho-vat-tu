@@ -79,7 +79,7 @@ window.SCHEMA = {
     params: ['B3', 'B4'], summary: ['B5', 'C5'], paramList: { B3: { sheet: 'LICH_EVENT', col: 'A', from: 5 } }, addRow: true },
 
   THONG_KE_PDA: { title: 'Thống kê PDA', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, cols: 'A:J', khoCol: 'B', addRow: true,
-    params: ['M3'], paramKho: 'M3', side: [{ title: 'Bảng tổng hợp PDA (theo ô M3)', from: 'L', to: 'P', headerRow: 4, rows: 6 }, { title: 'So sánh 3 kho', from: 'M', to: 'P', headerRow: 17, rows: 3 }] },
+    params: ['M3'], paramKho: 'M3', side: [{ title: 'Bảng tổng hợp PDA (theo ô M3)', from: 'L', to: 'auto', headerRow: 4, rows: 6 }, { title: 'So sánh 3 kho', from: 'M', to: 'P', headerRow: 17, rows: 3 }] },
   CAP_PHAT_PDA: { title: 'Cấp phát PDA hằng ngày', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { D: 'PDA' }, addRow: true, addCol: true, newestFirst: true,
     always: true, after: 'THONG_KE_PDA', pda: true },
   LICH_CV_HCM20: { title: 'Lịch CV – HCM20', icon: 'clock', group: 'tb', type: 'calendar', kho: 'HCM20' },

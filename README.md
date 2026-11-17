@@ -144,6 +144,15 @@ Lưu ý:
 - Cột *Trạng thái* trong `CAP_PHAT_PDA` dùng công thức `TODAY()`. Trang web tự tính lại trạng thái quá hạn mỗi lần mở, nên luôn đúng theo ngày.
 - Để tra được IMEI khi cấp máy, mỗi máy phải khai báo trước ở **Thống kê PDA** (kho, IMEI, tên thiết bị, tình trạng).
 
+### Bổ sung V3: Bảng tổng hợp PDA tự thêm thiết bị (18/11/2026)
+- **Vấn đề cũ:** Bảng tổng hợp PDA trên Sheet (vùng L4:P10) chỉ có 2 cột cố định là Seuic Autoid Q9 và Honeywell EDA51, nên thiết bị mới (ví dụ DT50S) không được đếm.
+- **Cách cập nhật:** dán lại `Code.gs` → 💾 Lưu → chọn hàm **`setupV3`** → ▶ Chạy → triển khai **Phiên bản mới**. Hàm này:
+  - thêm cột cho mọi thiết bị có trong dropdown "Tên thiết bị" hoặc đã nhập ở bảng chính, và chép công thức từ cột bên cạnh;
+  - sửa dòng "Số lượng thiết bị (theo kho chọn)" để cộng đủ tất cả các cột;
+  - cho cột Tên thiết bị ở CAP_PHAT_PDA nhận IMEI có hoặc không có chữ "IMEI:" phía trước.
+- **Về sau:** mỗi lần thêm thiết bị mới qua web (dropdown hoặc nhập dòng), cột tổng hợp được thêm tự động. Nếu thêm thiết bị bằng cách sửa trực tiếp trên Sheet, chạy lại `setupV3`.
+- **Giao diện:** bảng dùng chữ số đều nhau; số và tiêu đề cột số cùng căn phải; cột tự tính chỉ có nền xám (bỏ chữ nghiêng); mũi tên sắp xếp chỉ hiện khi rê chuột; dòng TỔNG in đậm.
+
 ## Dành cho Quản lý · Task
 
 Menu **Dành cho Quản lý → Task**. Dữ liệu nằm ở tab `QL_TASK` của Google Sheet. Apps Script tự tạo tab này khi có task đầu tiên; muốn tạo sẵn thì chạy hàm `setupTaskSheet` một lần.

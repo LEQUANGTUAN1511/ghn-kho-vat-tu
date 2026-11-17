@@ -38,6 +38,7 @@
   const dmy = iso => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; };
   const DATE_HINT = /ngày|hạn |hạn kiểm|đặt chậm|đầu quý|cuối quý|đầu tuần|đầu tháng|tháng kế hoạch/i;
   const RAW_HINT = /imei|msnv|^năm$|stt|số phiếu|^tháng$|số biên bản|mã tài sản/i;
+  const CODE_COL = /^(mã|imei|msnv|số phiếu|số biên bản)/i;   // cột mã: chữ số đều nhau, dễ dò
   function toDate(v, hint) {
     if (typeof v === 'string' && v.startsWith('D:')) { const [y, m, d] = v.slice(2).split('-').map(Number); return new Date(y, m - 1, d); }
     if (typeof v === 'number' && v > 30000 && v < 80000 && (hint === true || (hint && DATE_HINT.test(hint)))) { const [y, m, d] = serialToISO(v).split('-').map(Number); return new Date(y, m - 1, d); }
@@ -72,6 +73,8 @@
   }
   const STATUS_COL = /trạng thái|tình trạng|cảnh báo|kiểm tra$|tiến độ|^tình/i;
   const khoInfo = code => KHO.find(k => k.code === code) || { code, name: code, short: code, color: '#17a99a' };
+  // So khớp IMEI theo phần số: "IMEI: 8689…", "8689…" (quét mã vạch) là cùng 1 máy
+  const imeiKey = s => String(s == null ? '' : s).replace(/\D/g, '');
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
   function toast(msg, type = '') {
@@ -921,9 +924,19 @@
       }
       head += '<th class="grp" style="background:transparent"></th></tr>';
     }
+    // Kiểu cột (theo dữ liệu trang đang xem): số → căn phải; mã/IMEI/ngày → chữ số đều nhau; STT → giữa
+    const kindOf = {};
+    cols.forEach(col => {
+      let n = 0, d = 0, t = 0;
+      slice.forEach(r => { const v = val(def.name, r, col.c); if (v === '') return; t++; if (typeof v === 'number') n++; else if (typeof v === 'string' && v.startsWith('D:')) d++; });
+      kindOf[col.c] = /^stt$/i.test(col.h.trim()) ? 'stt'
+        : CODE_COL.test(col.h) ? 'code'
+        : t && d / t > .6 ? 'date'
+        : t && n / t > .6 && !RAW_HINT.test(col.h) && !DATE_HINT.test(col.h) ? 'num' : '';
+    });
     head += `<tr class="${def.khoGroups && state.kho === 'ALL' ? 'two' : ''}"><th class="rowno">#</th>` + cols.map(col => {
-      const s = vs.sort && vs.sort.c === col.c ? (vs.sort.dir > 0 ? '▲' : '▼') : '↕';
-      return `<th data-sort="${col.c}" class="${col.computed ? 'computed' : ''}" title="${col.computed ? 'Cột tự tính (công thức) – không sửa' : 'Cột nhập liệu – bấm vào ô để sửa'}">${esc(col.h)}<span class="sort">${s}</span></th>`;
+      const on = vs.sort && vs.sort.c === col.c, s = on ? (vs.sort.dir > 0 ? '▲' : '▼') : '↕';
+      return `<th data-sort="${col.c}" class="${[col.computed ? 'computed' : '', kindOf[col.c], on ? 'sorted' : ''].join(' ')}" title="${col.computed ? 'Cột tự tính (công thức) – không sửa' : 'Cột nhập liệu – bấm vào ô để sửa'}">${esc(col.h)}<span class="sort">${s}</span></th>`;
     }).join('') + '<th></th></tr>';
     const pendingCells = new Set();
     state.queue.forEach(op => { if (op.payload.sheet === def.name && op.action === 'update') op.payload.changes.forEach(ch => pendingCells.add(ch.row + ':' + ch.col)); });
@@ -942,7 +955,8 @@
         const cc = STATUS_COL.test(col.h) || def.type === 'calendar' ? chipClass(f) : null;
         const isNum = typeof v === 'number' && !RAW_HINT.test(col.h) && !(DATE_HINT.test(col.h) && v > 30000);
         const long = typeof f === 'string' && f.length > 40;
-        const klass = [editable ? 'edit' : 'calc', isNum ? 'num' : (long ? 'wrap' : 'nowrap'), pendingCells.has(r + ':' + col.c) ? 'pending' : ''].join(' ');
+        const k = kindOf[col.c];
+        const klass = [editable ? 'edit' : 'calc', isNum || k === 'num' ? 'num' : (long ? 'wrap' : 'nowrap'), k && k !== 'num' ? k : '', pendingCells.has(r + ':' + col.c) ? 'pending' : ''].join(' ');
         body += `<td class="${klass}" data-c="${col.c}">${cc ? `<span class="chip ${cc}">${esc(f)}</span>` : esc(f)}</td>`;
       });
       const nImg = state.images.filter(im => im.sheet === def.name && +im.row === r).length;
@@ -960,7 +974,7 @@
       if (totals) totals = `<div class="totals">Tổng các dòng đang xem: ${totals}</div>`;
     }
     host.innerHTML = `<div class="tbl-wrap"><table class="tbl"><thead>${head}</thead><tbody>${body}</tbody></table></div>${totals}
-      <div class="pager"><span>${rows.length.toLocaleString('vi-VN')} dòng${rows.length !== tableRows(def).length ? ` (lọc từ ${tableRows(def).length.toLocaleString('vi-VN')})` : ''} · <i>chữ nghiêng/xám = tự tính</i></span>
+      <div class="pager"><span>${rows.length.toLocaleString('vi-VN')} dòng${rows.length !== tableRows(def).length ? ` (lọc từ ${tableRows(def).length.toLocaleString('vi-VN')})` : ''} · <span class="legend"><i></i>ô nền xám = tự tính, không sửa</span></span>
         <div class="right">${def.type === 'calendar' ? '' : `<select class="select" id="psize">${[25, 50, 100, 200, 500].map(n => `<option ${n === vs.size ? 'selected' : ''}>${n}</option>`).join('')}</select>`}
           <button class="btn sm" id="pprev" ${vs.page <= 1 ? 'disabled' : ''}>‹</button><span>Trang ${vs.page}/${pages}</span><button class="btn sm" id="pnext" ${vs.page >= pages ? 'disabled' : ''}>›</button></div></div>`;
     $$('th[data-sort]', host).forEach(th => th.onclick = () => {
@@ -1104,7 +1118,10 @@
     $$('[data-setkho]', view).forEach(b => b.onclick = () => { const p = ref(b.dataset.setkho); enqueue('update', { sheet: def.name, changes: [{ row: p.r, col: p.c, value: state.kho }] }); route(true); });
   }
   function sideBlock(n, sd) {
-    const c1 = colNum(sd.from), c2 = colNum(sd.to), hr = sd.headerRow;
+    const c1 = colNum(sd.from), hr = sd.headerRow;
+    let c2 = sd.to === 'auto' ? c1 : colNum(sd.to);
+    // to: 'auto' → kéo tới cột tiêu đề cuối liền mạch (bảng tổng hợp tự thêm cột thiết bị mới)
+    if (sd.to === 'auto') while (c2 < c1 + 40 && String(val(n, hr, c2 + 1) || '').trim()) c2++;
     const head = []; for (let c = c1; c <= c2; c++) head.push({ c, h: String(val(n, hr, c) || '') });
     const rows = [];
     for (let r = hr + 1; r <= sh(n).v.length; r++) {
@@ -1113,8 +1130,18 @@
       if (!any) { if (!sd.rows) break; continue; }
       rows.push(r);
     }
-    return `<div class="card mt"><div class="card-h"><h3>${esc(sd.title)}</h3><span class="sub">tự tính trong Google Sheet</span></div><div class="tbl-wrap" style="max-height:none"><table class="tbl"><thead><tr>${head.map(x => `<th>${esc(x.h)}</th>`).join('')}</tr></thead><tbody>
-      ${rows.map(r => '<tr>' + head.map(x => { const v = val(n, r, x.c); return `<td class="${typeof v === 'number' ? 'num' : ''}">${esc(fmt(v, x.h))}</td>`; }).join('') + '</tr>').join('') || `<tr><td colspan="${head.length}" class="empty">Chưa có dữ liệu</td></tr>`}</tbody></table></div></div>`;
+    // Cột số: tiêu đề căn phải cùng phía với số; cột STT gọn ở giữa
+    head.forEach(x => {
+      const vals = rows.map(r => val(n, r, x.c)).filter(v => v !== '');
+      x.num = vals.length > 0 && vals.every(v => typeof v === 'number');
+      x.stt = /^stt$/i.test(x.h.trim());
+    });
+    const cls = x => x.stt ? 'stt' : x.num ? 'num' : '';
+    return `<div class="card mt"><div class="card-h"><h3>${esc(sd.title)}</h3><span class="sub">tự tính trong Google Sheet</span></div><div class="tbl-wrap" style="max-height:none"><table class="tbl side"><thead><tr>${head.map(x => `<th class="${cls(x)}">${esc(x.h)}</th>`).join('')}</tr></thead><tbody>
+      ${rows.map(r => {
+        const total = /^tổng$/i.test(String(head.map(x => val(n, r, x.c)).find(v => typeof v === 'string' && v.trim()) || '').trim());
+        return `<tr class="${total ? 'total' : ''}">` + head.map(x => { const v = val(n, r, x.c); return `<td class="${cls(x)}">${esc(fmt(v, x.h))}</td>`; }).join('') + '</tr>';
+      }).join('') || `<tr><td colspan="${head.length}" class="empty">Chưa có dữ liệu</td></tr>`}</tbody></table></div></div>`;
   }
 
   function renderDoc(view, n) {
@@ -1213,12 +1240,12 @@
       const hint = document.createElement('div'); hint.className = 'muted'; hint.style.fontSize = '12px'; el.after(hint);
       const priceEl = def.price && def.price.code === L ? body.querySelector(`[data-c="${colNum(def.price.to)}"]`) : null;
       const upd = (initial) => {
-        const o = codes(kind, true).find(x => String(x.v) === el.value);
+        const o = codes(kind, true).find(x => kind === 'PDA' ? imeiKey(x.v) !== '' && imeiKey(x.v) === imeiKey(el.value) : String(x.v) === el.value);
         const mayFill = !(initial === true && !isNew);   // dòng cũ: không tự ghi đơn giá khi chỉ mở xem
         const missMsg = kind === 'PDA' ? '⚠ IMEI chưa khai báo ở tab Thống kê PDA' : '⚠ Mã không có trong danh mục – bấm “＋ Mã mới” để thêm';
         let warn = '';
         if (kind === 'PDA' && o) {   // máy đang có người mượn / máy không ở tình trạng TỐT
-          const busy = pdaLoans().find(x => x.open && x.imei === el.value && x.r !== r);
+          const busy = pdaLoans().find(x => x.open && imeiKey(x.imei) === imeiKey(el.value) && x.r !== r);
           if (busy) warn = ` · ⚠ đang được mượn bởi ${busy.who || '?'} (${busy.ca} ${busy.d ? dmy(isoOf(busy.d)) : ''})`;
           else if (o.st && !/^tốt$/i.test(o.st)) warn = ` · ⚠ máy đang ở tình trạng ${o.st}`;
         }
@@ -1601,19 +1628,19 @@
     return out;
   }
   function pdaCounts(k) {
-    const L = pdaLoans(k), openSet = new Set(L.filter(x => x.open).map(x => x.imei));
+    const L = pdaLoans(k), openSet = new Set(L.filter(x => x.open).map(x => imeiKey(x.imei)));
     const devs = codes('PDA').filter(d => !k || d.kho === k), good = devs.filter(d => /^tốt$/i.test(d.st));
     return {
       today: L.filter(x => x.today).length, returned: L.filter(x => x.today && !x.open).length,
       open: L.filter(x => x.open && !x.late).length, late: L.filter(x => x.late).length, bad: L.filter(x => x.today && x.bad).length,
-      ready: good.filter(d => !openSet.has(d.v)).length, good: good.length, devices: devs.length
+      ready: good.filter(d => !openSet.has(imeiKey(d.v))).length, good: good.length, devices: devs.length
     };
   }
 
   function pdaPanel(view) {
     const k = state.kho === 'ALL' ? null : state.kho, c = pdaCounts(k);
     const open = pdaLoans(k).filter(x => x.open).sort((a, b) => (b.late - a.late) || ((a.d || 0) - (b.d || 0)) || a.out.localeCompare(b.out));
-    const dupes = {}; open.forEach(x => { if (x.imei) dupes[x.imei] = (dupes[x.imei] || 0) + 1; });
+    const dupes = {}; open.forEach(x => { const kk = imeiKey(x.imei); if (kk) dupes[kk] = (dupes[kk] || 0) + 1; });
     const wrap = document.createElement('div');
     wrap.innerHTML = `
       <div class="kpis">
@@ -1627,7 +1654,7 @@
         <div class="card-h"><div><h3>Máy đang được mượn${k ? ' · ' + esc(k) : ''}</h3><div class="sub" style="margin-top:3px">Quá hạn đứng đầu · bấm “Trả máy” khi nhận lại</div></div>
           <div class="right"><button class="btn primary" id="pdaOut">＋ Cấp máy</button></div></div>
         ${open.length ? `<ul class="list">${open.map(x => `<li class="${x.late ? 'is-late' : ''}">
-            <div class="grow"><div class="t">${esc(x.imei || '(chưa ghi IMEI)')}${x.name ? ` · <span class="muted">${esc(x.name)}</span>` : ''}${dupes[x.imei] > 1 ? ' <span class="chip red">IMEI đang mượn trùng</span>' : ''}</div>
+            <div class="grow"><div class="t">${esc(x.imei || '(chưa ghi IMEI)')}${x.name ? ` · <span class="muted">${esc(x.name)}</span>` : ''}${dupes[imeiKey(x.imei)] > 1 ? ' <span class="chip red">IMEI đang mượn trùng</span>' : ''}</div>
               <div class="s">👤 ${esc(x.who || '—')}${x.msnv ? ' (' + esc(x.msnv) + ')' : ''} · ${esc(x.kho)} · ${esc(x.ca)} · ${x.d ? dmy(isoOf(x.d)) : ''} ${esc(x.out)}${x.dept ? ' · ' + esc(x.dept) : ''}</div></div>
             <span class="chip ${x.late ? 'red' : 'amber'}">${x.late ? `Quá hạn ${x.lateDays} ngày` : 'Đang mượn'}</span>
             <button class="btn sm" data-ret="${x.r}">↩ Trả máy</button></li>`).join('')}</ul>`
@@ -1649,7 +1676,7 @@
   function openPdaReturn(r) {
     const x = pdaLoans().find(l => l.r === r); if (!x) return;
     const conds = (dvFor(PDA, 'K', 5, 5) || ['Bình thường']).map(String);
-    const dev = codes('PDA').find(d => d.v === x.imei);
+    const dev = codes('PDA').find(d => imeiKey(d.v) !== '' && imeiKey(d.v) === imeiKey(x.imei));
     const m = modal(`<h3>↩ Trả máy ${esc(x.imei)}</h3>
       <p class="muted" style="margin:0">${esc(x.name || '')} · ${esc(x.who)} · cấp ${x.d ? dmy(isoOf(x.d)) : ''} ${esc(x.out)}</p>
       <div class="form" style="margin-top:4px">
