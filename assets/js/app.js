@@ -63,7 +63,8 @@
   function chipClass(s) {
     const t = String(s).trim().toUpperCase();
     if (!t || t.length > 32) return null;
-    if (/^(CẦN ĐẶT|QUÁ HẠN|TRỄ|LỆCH|MÃ SAI|THIẾU|HƯ|MỚI HƯ|CHƯA HOÀN THÀNH)/.test(t)) return 'red';
+    if (/^(CẦN ĐẶT|QUÁ HẠN|TRỄ|LỆCH|MÃ SAI|THIẾU|HƯ|MỚI HƯ|CHƯA HOÀN THÀNH|NGỪNG DÙNG|ĐÃ TRẢ – CÓ LỖI)/.test(t)) return 'red';
+    if (t === 'ĐANG DÙNG' || t === 'ĐÃ TRẢ') return 'green';
     if (/^(SẮP|GẤP|DƯ$|CHƯA ĐẶT ĐM|CHỜ|ĐANG|ĐÃ THU HỒI|ĐÃ GỬI SỬA|CHƯA KIỂM TRA|CHƯA LÀM)/.test(t)) return 'amber';
     if (/^(OK|KHỚP|XONG|HOÀN THÀNH|TỐT|ĐÃ DUYỆT|ĐÃ DIỄN RA)$/.test(t)) return 'green';
     if (/^(ĐÃ THANH LÝ|LƯU TRỮ|CHƯA BẮT ĐẦU|KHO \(DỰ PHÒNG\))/.test(t)) return 'blue';
@@ -142,15 +143,44 @@
     const order = (state.data && state.data.order) || Object.keys(S);
     return order.filter(n => !window.HIDDEN_SHEETS.includes(n));
   }
-  function codes(kind) {
+  /* Cột "Trạng thái sử dụng" trong DM_NVL / DM_CCDC: "Ngừng dùng" = ẩn khỏi gợi ý nhưng giữ lịch sử */
+  const USE_COL_TITLE = 'Trạng thái sử dụng';
+  const USE_STOP = 'Ngừng dùng', USE_ON = 'Đang dùng';
+  const catSheet = kind => kind === 'NVL' ? 'DM_NVL' : 'DM_CCDC';
+  function useCol(name) {
+    const row = (sh(name) && sh(name).v[3]) || [];
+    const i = row.findIndex(h => String(h).trim().toLowerCase() === USE_COL_TITLE.toLowerCase());
+    return i >= 0 ? i + 1 : 0;
+  }
+  const isStopped = (name, r, uc) => uc > 0 && /^ngừng/i.test(String(val(name, r, uc)).trim());
+  /** Danh sách mã. all = true: gồm cả mã đã ngừng dùng (để tra tên cho dữ liệu cũ) */
+  function codes(kind, all) {
     if (kind === 'KHO') return KHO_CODES.map(c => ({ v: c, l: khoInfo(c).name }));
-    const name = kind === 'NVL' ? 'DM_NVL' : 'DM_CCDC', s = sh(name), out = [];
+    if (kind === 'PDA') {   // IMEI khai báo ở THONG_KE_PDA (cột C), tên máy cột D
+      const out = [], n = 'THONG_KE_PDA', s = sh(n); if (!s) return out;
+      for (let r = 5; r <= s.v.length; r++) {
+        const imei = plain(val(n, r, 3)); if (!imei) continue;
+        out.push({ v: imei, l: [plain(val(n, r, 4)), plain(val(n, r, 2)), plain(val(n, r, 5))].filter(Boolean).join(' · '), kho: plain(val(n, r, 2)), st: plain(val(n, r, 5)), r });
+      }
+      return out;
+    }
+    const name = catSheet(kind), s = sh(name), out = [];
     if (!s) return out;
-    for (let r = 5; r <= s.v.length; r++) { const a = val(name, r, 1); if (a) out.push({ v: a, l: val(name, r, 2), u: val(name, r, 4) }); }
+    const uc = useCol(name);
+    for (let r = 5; r <= s.v.length; r++) {
+      const a = val(name, r, 1); if (!a) continue;
+      const stop = isStopped(name, r, uc);
+      if (stop && !all) continue;
+      out.push({ v: a, l: val(name, r, 2), u: val(name, r, 4), g: val(name, r, 3), p: val(name, r, 5), r, stop });
+    }
     return out;
   }
   function fillDatalists() {
-    ['NVL', 'CCDC', 'KHO'].forEach(k => { $('#dl-' + k).innerHTML = codes(k).map(o => `<option value="${esc(o.v)}">${esc(o.l)}</option>`).join(''); });
+    ['NVL', 'CCDC', 'KHO', 'PDA'].forEach(k => {
+      let dl = $('#dl-' + k);
+      if (!dl) { dl = document.createElement('datalist'); dl.id = 'dl-' + k; document.body.appendChild(dl); }
+      dl.innerHTML = codes(k).map(o => `<option value="${esc(o.v)}">${esc(o.l)}</option>`).join('');
+    });
   }
 
   /* ------------------------------------------------------------------ table definition */
@@ -175,7 +205,10 @@
       const h = String(val(name, hr, c) || '').trim();
       if (!h) continue;
       let kho = null;
-      if (sc.khoGroups) for (const k in sc.khoGroups) { const [a, b] = sc.khoGroups[k].map(colNum); if (c >= a && c <= b) kho = k; }
+      if (sc.khoGroups) for (const k in sc.khoGroups) {
+        const g = sc.khoGroups[k], ranges = Array.isArray(g[0]) ? g : [g];   // [từ, đến] hoặc [[từ, đến], …]
+        if (ranges.some(([x, y]) => c >= colNum(x) && c <= colNum(y))) kho = k;
+      }
       cols.push({ c, L: colLet(c), h, computed: colComputed(name, c, sc.dataStart), kho });
     }
     const lastCol = cols.length ? Math.max(...cols.map(x => x.c)) : c2;
@@ -210,7 +243,11 @@
     const n = def.name, h = col.h;
     if (def.type === 'calendar') return col.c >= 5 && col.c <= 6 ? { t: 'select', list: CAL.progressList } : { t: col.c === 7 ? 'textarea' : 'textarea' };
     const list = dvFor(n, col.L, r, def.dataStart);
-    if (list) return { t: 'select', list };
+    if (list) {
+      // Cho phép thêm/bớt lựa chọn, trừ cột mã kho (dùng xuyên suốt các công thức)
+      const isKhoList = list.every(x => KHO_CODES.includes(String(x)) || String(x) === 'Tất cả');
+      return { t: 'select', list, manage: !isKhoList && def.khoCol !== col.L && r >= def.dataStart, L: col.L };
+    }
     if (def.khoCol === col.L) return { t: 'select', list: KHO_CODES };
     if (def.lookup && def.lookup[col.L]) return { t: 'lookup', dl: 'dl-' + def.lookup[col.L] };
     const s = sh(n);
@@ -301,6 +338,15 @@
     } else if (op.action === 'clearRow') {
       for (let c = 1; c <= p.lastCol; c++) if (!isF(n, p.row, c)) setLocal(n, p.row, c, '');
     } else if (op.action === 'addColumn') setLocal(n, p.headerRow, p.col, p.title);
+    else if (op.action === 'setList') setLocalList(n, p.col, p.dataStart, p.values);
+  }
+  /** Thay danh sách dropdown của 1 cột trong dữ liệu trên máy */
+  function setLocalList(n, L, dataStart, values) {
+    const s = sh(n); if (!s) return;
+    s.dv = s.dv || {};
+    const re = new RegExp('^' + L + '(\\d+)$');
+    Object.keys(s.dv).forEach(k => { const m = re.exec(k); if (m && +m[1] >= dataStart) s.dv[k] = values.slice(); });
+    s.dv[L + dataStart] = values.slice();
   }
 
   async function flush() {
@@ -356,11 +402,12 @@
   }
 
   /** Tải lại một số tab. `rev` là phiên bản mà danh sách tab này ứng với. */
-  async function fetchSheets(names, rev) {
+  async function fetchSheets(names, rev, withDv) {
     state.refreshing = true;
     try {
       setSync('busy', 'Đang cập nhật…');
-      const j = await api('all', { sheets: names.join(','), nodv: 1 });
+      // withDv: có tab vừa đổi danh sách dropdown → lấy luôn dropdown mới
+      const j = await api('all', { sheets: names.join(','), nodv: withDv ? 0 : 1 });
       if (!j.partial) {                    // Apps Script bản cũ bỏ qua tham số → đã trả về cả file
         state.data = { sheets: j.sheets, order: j.order, title: j.title, url: j.url, generatedAt: j.generatedAt };
       } else {
@@ -389,7 +436,7 @@
       // Không có danh sách (Apps Script bản cũ / nhật ký hết hạn) hoặc có tab mới → tải lại toàn bộ
       if (!list || state.mode !== 'live' || !state.data || list.some(n => !state.data.sheets[n])) return await fetchAll(true);
       if (!list.length) { state.rev = j.rev; setSync('ok'); return; }
-      await fetchSheets(list, j.rev);
+      await fetchSheets(list, j.rev, Array.isArray(j.dvSheets) && j.dvSheets.length > 0);
     } catch (e) {
       if (!e.auth) { state.online = false; setSync('off'); }
     }
@@ -454,12 +501,12 @@
     const view = $('#view');
     if (!state.data) { view.innerHTML = '<div class="empty">Đang tải…</div>'; return; }
     let m;
-    if ((m = /^#\/kho\/(.+)$/.exec(h))) { renderKho(view, m[1]); taskAlert(view, m[1]); }
+    if ((m = /^#\/kho\/(.+)$/.exec(h))) { renderKho(view, m[1]); pdaAlert(view, m[1]); taskAlert(view, m[1]); }
     else if ((m = /^#\/sheet\/(.+)$/.exec(h))) renderSheet(view, m[1]);
     else if (h === '#/hinh-anh') renderGallery(view);
     else if (h === '#/nhat-ky') renderLog(view);
     else if (h === '#/cai-dat') renderSettings(view);
-    else { renderOverview(view); taskAlert(view, state.kho === 'ALL' ? null : state.kho); }
+    else { const k = state.kho === 'ALL' ? null : state.kho; renderOverview(view); pdaAlert(view, k); taskAlert(view, k); }
     if (keepScroll) window.scrollTo(0, y); else window.scrollTo(0, 0);
   }
 
@@ -782,6 +829,7 @@
           ${def.type !== 'calendar' ? filterSelects(def, vs) : ''}
           <div class="right">
             ${def.addRow ? `<button class="btn primary" id="addRow">＋ Thêm dòng</button>` : ''}
+            ${name === 'DM_NVL' || name === 'DM_CCDC' ? `<button class="btn" id="catMgr" title="Đánh dấu mã đang dùng / ngừng dùng">⚙ Đang dùng / Ngừng dùng</button>` : ''}
             ${def.addCol ? `<button class="btn" id="addCol" title="Bổ sung hạng mục (cột mới) vào bảng">＋ Hạng mục</button>` : ''}
             <button class="btn" id="csv" title="Xuất bảng đang xem ra Excel (CSV)">⭳ Xuất Excel</button>
             <button class="btn" id="print" title="In / lưu PDF">⎙ In</button>
@@ -797,12 +845,16 @@
       $('#fcol').onchange = e => { vs.fcol = e.target.value; vs.fval = ''; vs.page = 1; renderSheet(view, name); };
       if ($('#fval')) $('#fval').onchange = e => { vs.fval = e.target.value; vs.page = 1; draw(); };
     }
+    if (s.local) $('.card-h .sub', view).insertAdjacentHTML('beforeend', ' · <b class="warn-text">Tab chưa có trên Google Sheet – chạy hàm setupV2 trong Apps Script (hoặc thêm dòng đầu tiên) để tạo.</b>');
+    if (sc.pda) pdaPanel(view);
     if ($('#addRow')) $('#addRow').onclick = () => {
+      if (sc.pda) return openPdaOut();
       const pre = {};
       if (def.khoCol && k !== 'ALL') pre[colNum(def.khoCol)] = k;
       openRowDrawer(name, null, pre);
     };
     if ($('#addCol')) $('#addCol').onclick = () => addColumn(def);
+    if ($('#catMgr')) $('#catMgr').onclick = () => openCatalogManager(name === 'DM_NVL' ? 'NVL' : 'CCDC', () => route(true));
     $('#csv').onclick = () => exportCSV(def);
     $('#print').onclick = () => window.print();
     bindParams(def, view);
@@ -897,7 +949,17 @@
       body += `<td class="rowact"><button class="ra ${nImg ? 'has' : ''}" data-act="img" title="Hình ảnh">📷${nImg ? ' ' + nImg : ''}</button><button class="ra" data-act="open" title="Xem / sửa chi tiết">✎</button>${def.addRow ? '<button class="ra" data-act="del" title="Xóa dòng (giữ công thức)">🗑</button>' : ''}</td></tr>`;
     });
     if (!slice.length) body = `<tr><td colspan="${cols.length + 2}"><div class="empty">${tableRows(def).length ? 'Không có dòng phù hợp bộ lọc.' : 'Chưa có dữ liệu.' + (def.addRow ? ' Bấm “＋ Thêm dòng” để nhập.' : '')}</div></td></tr>`;
-    host.innerHTML = `<div class="tbl-wrap"><table class="tbl"><thead>${head}</thead><tbody>${body}</tbody></table></div>
+    // Tổng tiền (Thành tiền / Giá trị tồn) của các dòng đang lọc
+    let totals = '';
+    if (def.totals) {
+      const moneyCols = cols.filter(col => /thành tiền|giá trị/i.test(col.h));
+      totals = moneyCols.map(col => {
+        const sum = rows.reduce((a, r) => a + num(val(def.name, r, col.c) || 0), 0);
+        return `<span class="tot"><b>${esc(col.h.replace(/\s*\(VNĐ\)/i, ''))}:</b> ${Math.round(sum).toLocaleString('vi-VN')} đ</span>`;
+      }).join('');
+      if (totals) totals = `<div class="totals">Tổng các dòng đang xem: ${totals}</div>`;
+    }
+    host.innerHTML = `<div class="tbl-wrap"><table class="tbl"><thead>${head}</thead><tbody>${body}</tbody></table></div>${totals}
       <div class="pager"><span>${rows.length.toLocaleString('vi-VN')} dòng${rows.length !== tableRows(def).length ? ` (lọc từ ${tableRows(def).length.toLocaleString('vi-VN')})` : ''} · <i>chữ nghiêng/xám = tự tính</i></span>
         <div class="right">${def.type === 'calendar' ? '' : `<select class="select" id="psize">${[25, 50, 100, 200, 500].map(n => `<option ${n === vs.size ? 'selected' : ''}>${n}</option>`).join('')}</select>`}
           <button class="btn sm" id="pprev" ${vs.page <= 1 ? 'disabled' : ''}>‹</button><span>Trang ${vs.page}/${pages}</span><button class="btn sm" id="pnext" ${vs.page >= pages ? 'disabled' : ''}>›</button></div></div>`;
@@ -932,7 +994,7 @@
     let ctl;
     if (ft.t === 'select') {
       ctl = document.createElement('select');
-      ctl.innerHTML = '<option value=""></option>' + ft.list.map(o => `<option ${String(o) === cur ? 'selected' : ''}>${esc(o)}</option>`).join('') + (cur && !ft.list.map(String).includes(cur) ? `<option selected>${esc(cur)}</option>` : '');
+      ctl.innerHTML = selectOptionsHtml(ft, cur);
     } else {
       ctl = document.createElement('input');
       ctl.type = ft.t === 'date' ? 'date' : ft.t === 'number' ? 'number' : 'text';
@@ -966,7 +1028,19 @@
       else if (e.key === 'Tab') { e.preventDefault(); finish(true, e.shiftKey ? -1 : 1); }
     });
     ctl.addEventListener('blur', () => setTimeout(() => finish(true), 120));
-    if (ctl.tagName === 'SELECT') ctl.addEventListener('change', () => finish(true));
+    if (ctl.tagName === 'SELECT') ctl.addEventListener('change', () => {
+      const v = ctl.value;
+      if (v === OPT_ADD || v === OPT_MANAGE) {
+        // Thoát chế độ sửa ô trước, rồi mới hỏi (tránh mất ô khi hộp thoại lấy focus)
+        ctl.value = cur; finish(false);
+        if (v === OPT_ADD) {
+          const name = askNewOption(def, col);
+          if (name && name !== cur) { enqueue('update', { sheet: def.name, changes: [{ row: r, col: c, value: name }] }); drawTable(def); }
+        } else openListManager(def, col, () => drawTable(def));
+        return;
+      }
+      finish(true);
+    });
   }
 
   function deleteRow(def, r) {
@@ -1058,7 +1132,22 @@
       <dt>Bổ sung hạng mục</dt><dd>“＋ Hạng mục” thêm cột mới vào bên phải bảng trên Google Sheet.</dd>
       <dt>Hình ảnh</dt><dd>Bấm 📷 ở mỗi dòng để tải ảnh (chụp bằng điện thoại được). Ảnh lưu ở Google Drive, link ghi ở tab WEB_HINH_ANH.</dd>
       <dt>Theo dõi từng kho</dt><dd>Chọn kho ở góc trên để lọc mọi bảng, hoặc mở trang riêng của từng kho ở menu bên trái.</dd>
-      <dt>Sao lưu</dt><dd>Mọi thay đổi ghi nhật ký (tab WEB_NHAT_KY). Sao lưu cả file vào Google Drive hằng ngày lúc 23:00, và bấm “Sao lưu ngay” trong Cài đặt bất cứ lúc nào.</dd></dl>`;
+      <dt>Sao lưu</dt><dd>Mọi thay đổi ghi nhật ký (tab WEB_NHAT_KY). Sao lưu cả file vào Google Drive hằng ngày lúc 23:00, và bấm “Sao lưu ngay” trong Cài đặt bất cứ lúc nào.</dd>
+      <dt>Đồng bộ nhiều người</dt><dd>Web hỏi Google Sheet mỗi 10 giây và chỉ tải lại tab vừa đổi: người khác (hoặc ai sửa thẳng trên Sheet) thấy thay đổi sau khoảng 10–20 giây. Bấm ⟳ để tải ngay. Mất mạng thì thay đổi được giữ trên máy và tự gửi khi có mạng lại.</dd></dl>
+      <h2>Nhập – Xuất – Tồn: NVL và CCDC</h2><dl>
+      <dt>Ghi phiếu</dt><dd>Mỗi dòng = 1 mã ở 1 kho. Loại giao dịch: Nhập · Xuất (bắt buộc có người nhận) · Điều chuyển đi + Điều chuyển đến (ghi 2 dòng, mỗi kho 1 dòng, có kho đối ứng) · Xuất hủy / hao hụt. Riêng CCDC có thêm <b>Thu hồi nhập kho</b> khi CCDC đã cấp phát được trả về kho. Cột “Kiểm tra” báo dòng thiếu dữ liệu hoặc sai mã.</dd>
+      <dt>Đơn giá – Thành tiền</dt><dd>Chọn mã xong, web tự điền Đơn giá theo danh mục (sửa được nếu giá thực tế khác). Để trống Đơn giá thì Sheet tự lấy giá danh mục. Thành tiền = Số lượng × Đơn giá, tự tính. Cuối bảng có tổng Thành tiền của các dòng đang lọc (lọc theo kho, tìm kiếm, lọc cột).</dd>
+      <dt>Tồn kho</dt><dd>Tồn kho NVL và Tồn kho CCDC tự tính từ sổ. Chỉ nhập “Tồn đầu” một lần (số kiểm kê ngày bắt đầu dùng). Có Giá trị tồn từng kho và tổng, tính theo đơn giá danh mục. Tồn kho CCDC có thêm cột “Đang sử dụng” lấy từ Sổ tài sản CCDC.</dd>
+      <dt>Mã NVL / CCDC mới</dt><dd>Trong phiếu, bấm “＋ Mã NVL/CCDC mới” dưới ô mã: chọn nhóm (mã tự sinh), nhập tên, ĐVT, đơn giá. Mã không còn dùng thì bấm “⚙ Danh mục” → <b>Ngừng dùng</b> (ẩn khỏi gợi ý, vẫn giữ lịch sử). Không xóa hẳn mã đã có giao dịch.</dd>
+      <dt>Dropdown</dt><dd>Cuối mỗi dropdown có “＋ Thêm lựa chọn mới…” và “⚙ Sửa / xóa danh sách…”. Bỏ một lựa chọn không làm mất dữ liệu đã nhập ở các dòng cũ.</dd></dl>
+      <h2>Thiết bị: cấp phát PDA hằng ngày</h2><dl>
+      <dt>Khai báo máy</dt><dd>Mỗi máy khai báo 1 lần ở <b>Thống kê PDA</b> (kho, IMEI, tên thiết bị, tình trạng). Trang cấp phát tra máy theo IMEI.</dd>
+      <dt>Cấp máy</dt><dd>Trang <b>Cấp phát PDA hằng ngày</b> → “＋ Cấp máy”: ngày, ca và giờ cấp tự điền; chọn IMEI, nhập người nhận, MSNV, bộ phận. Web cảnh báo nếu máy đang được người khác mượn hoặc không ở tình trạng TỐT.</dd>
+      <dt>Nhận lại máy</dt><dd>Ở danh sách “Máy đang được mượn”, bấm “↩ Trả máy”, chọn tình trạng khi trả. Nếu máy hư / rơi vỡ / mất, web có thể cập nhật luôn máy đó ở Thống kê PDA thành <b>MỚI HƯ</b>.</dd>
+      <dt>Theo dõi</dt><dd>Chỉ số trong ngày: lượt cấp, đang mượn, quá hạn trả (mượn từ hôm trước chưa trả), trả về có lỗi, máy sẵn sàng. Máy quá hạn trả được cảnh báo ở Tổng quan và trang từng kho.</dd></dl>
+      <h2>Dành cho Quản lý: Task</h2><dl>
+      <dt>Tạo task</dt><dd>Bắt buộc có tiêu đề, người phụ trách và hạn chót. Có thể chia thành checklist các bước nhỏ. Task quá hạn luôn đứng đầu danh sách, số task quá hạn hiện trên menu.</dd>
+      <dt>Thói quen</dt><dd>Đầu ngày xem tab “Quá hạn” và “Hôm nay”. Cuối tuần nhóm theo người phụ trách và rà mục “Dễ bị sót”.</dd></dl>`;
     view.innerHTML = h + '</div></div>';
   }
 
@@ -1094,8 +1183,7 @@
         if (isNew) return '';
         ctl = `<div class="ro">${esc(fmt(v, col.h)) || '<span class="muted">—</span>'}</div>`;
       } else if (ft.t === 'select') {
-        const cur = plain(v);
-        ctl = `<select class="select" id="${id}" data-c="${col.c}"><option value=""></option>${ft.list.map(o => `<option ${String(o) === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}${cur && !ft.list.map(String).includes(cur) ? `<option selected>${esc(cur)}</option>` : ''}</select>`;
+        ctl = `<select class="select" id="${id}" data-c="${col.c}" ${ft.manage ? 'data-managed="1"' : ''}>${selectOptionsHtml(ft, plain(v))}</select>`;
       } else if (ft.t === 'textarea') ctl = `<textarea id="${id}" data-c="${col.c}">${esc(inputValue(v, ft))}</textarea>`;
       else {
         let list = '';
@@ -1118,11 +1206,36 @@
       const gEl = body.querySelector(`[data-c="${colNum(def.autoCode.from)}"]`), cEl = body.querySelector(`[data-c="${colNum(def.autoCode.col)}"]`);
       if (gEl && cEl) gEl.addEventListener('change', () => { if (!cEl.value) cEl.value = nextCode(def, gEl.value); });
     }
+    $$('select[data-managed]', body).forEach(sel => bindManagedSelect(sel, def, def.cols.find(x => x.c === +sel.dataset.c)));
     if (def.lookup) Object.keys(def.lookup).forEach(L => {
       const el = body.querySelector(`[data-c="${colNum(L)}"]`); if (!el) return;
+      const kind = def.lookup[L];
       const hint = document.createElement('div'); hint.className = 'muted'; hint.style.fontSize = '12px'; el.after(hint);
-      const upd = () => { const o = codes(def.lookup[L]).find(x => x.v === el.value); hint.textContent = el.value ? (o ? `${o.l}${o.u ? ' · ' + o.u : ''}` : '⚠ Mã không có trong danh mục') : ''; };
-      el.addEventListener('input', upd); upd();
+      const priceEl = def.price && def.price.code === L ? body.querySelector(`[data-c="${colNum(def.price.to)}"]`) : null;
+      const upd = (initial) => {
+        const o = codes(kind, true).find(x => String(x.v) === el.value);
+        const mayFill = !(initial === true && !isNew);   // dòng cũ: không tự ghi đơn giá khi chỉ mở xem
+        const missMsg = kind === 'PDA' ? '⚠ IMEI chưa khai báo ở tab Thống kê PDA' : '⚠ Mã không có trong danh mục – bấm “＋ Mã mới” để thêm';
+        let warn = '';
+        if (kind === 'PDA' && o) {   // máy đang có người mượn / máy không ở tình trạng TỐT
+          const busy = pdaLoans().find(x => x.open && x.imei === el.value && x.r !== r);
+          if (busy) warn = ` · ⚠ đang được mượn bởi ${busy.who || '?'} (${busy.ca} ${busy.d ? dmy(isoOf(busy.d)) : ''})`;
+          else if (o.st && !/^tốt$/i.test(o.st)) warn = ` · ⚠ máy đang ở tình trạng ${o.st}`;
+        }
+        hint.textContent = el.value ? (o ? `${o.stop ? '⚠ Mã đã ngừng dùng · ' : ''}${o.l}${o.u ? ' · ' + o.u : ''}${o.p ? ' · ' + num(o.p).toLocaleString('vi-VN') + ' đ' : ''}${warn}` : missMsg) : '';
+        hint.style.color = el.value && (!o || o.stop || warn) ? 'var(--red)' : '';
+        // Tự điền đơn giá theo danh mục khi ô Đơn giá còn trống (vẫn sửa được)
+        if (mayFill && priceEl && o && o.p !== '' && o.p != null && (priceEl.value === '' || priceEl.dataset.auto === '1')) { priceEl.value = num(o.p); priceEl.dataset.auto = '1'; }
+      };
+      if (priceEl) priceEl.addEventListener('input', () => { priceEl.dataset.auto = ''; });
+      el.addEventListener('input', () => upd(false)); upd(true);
+      if (kind === 'NVL' || kind === 'CCDC') {
+        const tools = document.createElement('div'); tools.className = 'lk-tools';
+        tools.innerHTML = `<button type="button" class="btn sm" data-lk="new">＋ Mã ${kind} mới</button><button type="button" class="btn sm" data-lk="cat">⚙ Danh mục ${kind}</button>`;
+        hint.after(tools);
+        tools.querySelector('[data-lk=new]').onclick = () => openNewCodeModal(kind, code => { el.value = code; upd(); });
+        tools.querySelector('[data-lk=cat]').onclick = () => openCatalogManager(kind, upd);
+      }
     });
     $('#dSave').onclick = () => {
       const changes = [], values = {};
@@ -1282,6 +1395,299 @@
     listBk();
   }
 
+  /* ------------------------------------------------------------------ DANH SÁCH LỰA CHỌN (dropdown)
+   * Dropdown lấy từ quy tắc xác thực dữ liệu của Google Sheet. Thêm / bớt lựa chọn ngay trên web
+   * → Apps Script (setList) thay quy tắc của cột trên Sheet. Dữ liệu đã nhập ở dòng cũ không bị đổi. */
+  const OPT_ADD = '__add__', OPT_MANAGE = '__manage__';
+  function selectOptionsHtml(ft, cur) {
+    const list = ft.list.map(String);
+    return '<option value=""></option>' + list.map(o => `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')
+      + (cur && !list.includes(cur) ? `<option selected>${esc(cur)}</option>` : '')
+      + (ft.manage ? `<option disabled>──────────</option><option value="${OPT_ADD}">＋ Thêm lựa chọn mới…</option><option value="${OPT_MANAGE}">⚙ Sửa / xóa danh sách…</option>` : '');
+  }
+  const currentList = (def, col) => (dvFor(def.name, col.L, def.dataStart, def.dataStart) || []).map(String);
+  function saveList(def, col, values) {
+    enqueue('setList', { sheet: def.name, col: col.L, dataStart: def.dataStart, values });
+    toast(`Đã cập nhật danh sách “${col.h}” (${values.length} lựa chọn)`);
+  }
+  /** Hỏi tên lựa chọn mới, thêm vào danh sách; trả về tên (hoặc '' nếu hủy) */
+  function askNewOption(def, col) {
+    const name = (prompt(`Thêm lựa chọn mới cho “${col.h}”:`) || '').trim();
+    if (!name) return '';
+    const list = currentList(def, col);
+    const same = list.find(x => x.toLowerCase() === name.toLowerCase());
+    if (same) { toast(`“${same}” đã có trong danh sách`, 'warn'); return same; }
+    saveList(def, col, [...list, name]);
+    return name;
+  }
+  /** Gắn xử lý "Thêm mới / Sửa danh sách" cho 1 dropdown trong form */
+  function bindManagedSelect(sel, def, col) {
+    let prev = sel.value;
+    sel.addEventListener('change', () => {
+      const v = sel.value;
+      if (v !== OPT_ADD && v !== OPT_MANAGE) { prev = v; return; }
+      sel.value = prev;
+      const redraw = pick => { sel.innerHTML = selectOptionsHtml(fieldType(def, col, def.dataStart), pick); sel.value = pick; prev = pick; };
+      if (v === OPT_ADD) { const name = askNewOption(def, col); if (name) redraw(name); }
+      else openListManager(def, col, () => redraw(prev));
+    });
+  }
+
+  function colUsage(def, col) {
+    const s = sh(def.name), out = {};
+    if (!s) return out;
+    for (let r = def.dataStart; r <= s.v.length; r++) { const v = plain(val(def.name, r, col.c)); if (v) out[v] = (out[v] || 0) + 1; }
+    return out;
+  }
+
+  function modal(html, cls = '') {
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = `<div class="modal ${cls}" role="dialog" aria-modal="true">${html}</div>`;
+    document.body.appendChild(bg);
+    const close = () => bg.remove();
+    bg.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+    bg.addEventListener('click', e => { if (e.target === bg) close(); });
+    return { bg, close, $: s => bg.querySelector(s), $$: s => [...bg.querySelectorAll(s)] };
+  }
+
+  function openListManager(def, col, onClose) {
+    let items = currentList(def, col);
+    const orig = items.join('\n'), usage = colUsage(def, col);
+    const m = modal(`<h3>Danh sách “${esc(col.h)}”</h3>
+      <p class="muted" style="margin:0">Tab ${esc(def.name)} · cột ${esc(col.L)}. Bớt lựa chọn <b>không xóa</b> dữ liệu đã nhập ở các dòng cũ.</p>
+      <ul class="lm-list" id="lmList"></ul>
+      <div class="ck-add"><input class="input" id="lmNew" placeholder="Thêm lựa chọn… (Enter)"><button class="btn" id="lmAdd" type="button">＋ Thêm</button></div>
+      <div class="row"><button class="btn" id="lmCancel" type="button">Hủy</button><button class="btn primary" id="lmSave" type="button">💾 Lưu danh sách</button></div>`, 'wide');
+    const done = () => { m.close(); onClose && onClose(); };
+    const draw = () => {
+      m.$('#lmList').innerHTML = items.map((x, i) => `<li><span class="grow">${esc(x)}</span><span class="muted">${usage[x] ? usage[x] + ' dòng đang dùng' : 'chưa dùng'}</span>
+        <button class="icon-btn sm" data-up="${i}" title="Đưa lên" aria-label="Đưa ${esc(x)} lên" ${i ? '' : 'disabled'}>↑</button>
+        <button class="icon-btn sm danger" data-del="${i}" title="Bỏ khỏi danh sách" aria-label="Bỏ ${esc(x)}">✕</button></li>`).join('') || '<li class="muted">Danh sách trống</li>';
+      m.$$('[data-up]').forEach(b => b.onclick = () => { const i = +b.dataset.up; [items[i - 1], items[i]] = [items[i], items[i - 1]]; draw(); });
+      m.$$('[data-del]').forEach(b => b.onclick = () => {
+        const x = items[+b.dataset.del];
+        if (usage[x] && !confirm(`“${x}” đang được dùng ở ${usage[x]} dòng.\nCác dòng đó vẫn giữ nguyên giá trị, chỉ là không chọn được “${x}” cho dòng mới.\n\nBỏ khỏi danh sách?`)) return;
+        items.splice(+b.dataset.del, 1); draw();
+      });
+    };
+    const add = () => {
+      const el = m.$('#lmNew'), s = el.value.trim(); if (!s) return;
+      if (items.some(x => x.toLowerCase() === s.toLowerCase())) { toast(`“${s}” đã có`, 'warn'); return; }
+      items.push(s); el.value = ''; draw(); el.focus();
+    };
+    draw();
+    m.$('#lmAdd').onclick = add;
+    m.$('#lmNew').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+    m.$('#lmCancel').onclick = done;
+    m.$('#lmSave').onclick = () => {
+      if (!items.length) { toast('Danh sách phải còn ít nhất 1 lựa chọn', 'warn'); return; }
+      if (items.join('\n') !== orig) saveList(def, col, items);
+      done();
+    };
+    setTimeout(() => m.$('#lmNew').focus(), 50);
+  }
+
+  /* ------------------------------------------------------------------ DANH MỤC MÃ NVL / CCDC
+   * Thêm mã mới ngay khi đang nhập phiếu; "Ngừng dùng" thay cho xóa (Tồn kho, Định mức, Kế hoạch
+   * và lịch sử nhập/xuất đều tham chiếu theo mã nên không xóa hẳn được). */
+  function openNewCodeModal(kind, onDone) {
+    const name = catSheet(kind), def = tableDef(name), ac = def.autoCode;
+    const groups = Object.keys(ac.map);
+    const units = [...new Set(codes(kind, true).map(o => plain(o.u)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'));
+    const m = modal(`<h3>＋ Thêm mã ${kind} mới</h3>
+      <p class="muted" style="margin:0">Ghi vào tab ${name}. Mã tự sinh theo nhóm.</p>
+      <div class="field"><label for="ncG">Nhóm</label><select class="select" id="ncG">${groups.map(g => `<option>${esc(g)}</option>`).join('')}</select></div>
+      <div class="field"><label for="ncC">Mã</label><input class="input" id="ncC"></div>
+      <div class="field"><label for="ncN">Tên ${kind} <span class="req">*</span></label><input class="input" id="ncN" placeholder="VD: Băng keo trong 5cm"></div>
+      <div class="form" style="margin-top:0">
+        <div class="field"><label for="ncU">ĐVT <span class="req">*</span></label><input class="input" id="ncU" list="ncUl"><datalist id="ncUl">${units.map(u => `<option value="${esc(u)}">`).join('')}</datalist></div>
+        <div class="field"><label for="ncP">Đơn giá (VNĐ)</label><input class="input" id="ncP" type="number" min="0" step="any"></div>
+      </div>
+      <div class="row"><button class="btn" id="ncCancel" type="button">Hủy</button><button class="btn primary" id="ncSave" type="button">＋ Thêm vào danh mục</button></div>`);
+    const setCode = () => { m.$('#ncC').value = nextCode(def, m.$('#ncG').value); };
+    setCode();
+    m.$('#ncG').onchange = setCode;
+    m.$('#ncCancel').onclick = m.close;
+    m.$('#ncSave').onclick = () => {
+      const code = m.$('#ncC').value.trim(), nm = m.$('#ncN').value.trim(), u = m.$('#ncU').value.trim(), p = m.$('#ncP').value;
+      if (!code || !nm || !u) { toast('Cần nhập mã, tên và ĐVT', 'warn'); return; }
+      const all = codes(kind, true);
+      if (all.some(o => String(o.v) === code)) { toast(`Mã ${code} đã tồn tại`, 'warn'); return; }
+      const dup = all.find(o => String(o.l).trim().toLowerCase() === nm.toLowerCase());
+      if (dup && !confirm(`Đã có “${dup.l}” (mã ${dup.v}${dup.stop ? ', đang ngừng dùng' : ''}).\nVẫn tạo mã mới?`)) return;
+      const values = { 1: code, 2: nm, 3: m.$('#ncG').value, 4: u };
+      if (p !== '') values[5] = Number(p);
+      enqueue('append', { sheet: name, values, dataStart: def.dataStart, lastCol: def.lastCol });
+      fillDatalists();
+      toast(`Đã thêm ${code} – ${nm}`);
+      m.close(); onDone && onDone(code);
+    };
+    setTimeout(() => m.$('#ncN').focus(), 50);
+  }
+
+  /** Đặt Đang dùng / Ngừng dùng cho 1 mã (tự thêm cột "Trạng thái sử dụng" nếu Sheet chưa có) */
+  function setCodeUse(kind, r, stop) {
+    const name = catSheet(kind);
+    let uc = useCol(name);
+    if (!uc) {
+      const def = tableDef(name), hdr = sh(name).v[3] || [];
+      uc = Math.max(def.lastCol, hdr.length) + 1;
+      enqueue('addColumn', { sheet: name, headerRow: 4, col: uc, title: USE_COL_TITLE });
+    }
+    enqueue('update', { sheet: name, changes: [{ row: r, col: uc, value: stop ? USE_STOP : USE_ON }] });
+    fillDatalists();
+  }
+
+  function stockOf(code) {
+    const s = sh('TON_KHO'); if (!s) return null;
+    for (let r = 5; r <= s.v.length; r++) if (String(val('TON_KHO', r, 1)) === String(code)) return [7, 13, 19].reduce((a, c) => a + num(val('TON_KHO', r, c)), 0);
+    return null;
+  }
+
+  function openCatalogManager(kind, onClose) {
+    let q = '', show = 'all';
+    const m = modal(`<h3>⚙ Danh mục ${kind}: đang dùng / ngừng dùng</h3>
+      <p class="muted" style="margin:0">Mã <b>ngừng dùng</b> sẽ ẩn khỏi gợi ý khi nhập phiếu, nhưng vẫn giữ trong lịch sử, tồn kho và báo cáo.</p>
+      <div class="toolbar" style="padding:12px 0;border:0">
+        <div class="search" style="flex:1"><input class="input" id="cmQ" placeholder="Tìm mã hoặc tên…"></div>
+        <div class="tabs">${[['all', 'Tất cả'], ['on', 'Đang dùng'], ['off', 'Ngừng dùng']].map(t => `<button class="tab ${t[0] === show ? 'active' : ''}" data-show="${t[0]}" type="button">${t[1]}</button>`).join('')}</div>
+      </div>
+      <ul class="lm-list tall" id="cmList"></ul>
+      <div class="row"><button class="btn" id="cmNew" type="button">＋ Mã mới</button><span style="flex:1"></span><button class="btn primary" id="cmClose" type="button">Xong</button></div>`, 'wide');
+    const done = () => { m.close(); onClose && onClose(); };
+    const draw = () => {
+      const ql = q.toLowerCase();
+      const list = codes(kind, true).filter(o => (show === 'all' || (show === 'off') === o.stop) && (!ql || `${o.v} ${o.l} ${o.g}`.toLowerCase().includes(ql)));
+      m.$('#cmList').innerHTML = list.map(o => {
+        const st = kind === 'NVL' ? stockOf(o.v) : null;
+        return `<li class="${o.stop ? 'off' : ''}"><div class="grow"><div class="t">${esc(o.v)} · ${esc(o.l)}</div><div class="s">${esc(o.g)}${o.u ? ' · ' + esc(o.u) : ''}${st ? ` · tồn 3 kho: ${st.toLocaleString('vi-VN')}` : ''}</div></div>
+          <span class="chip ${o.stop ? 'red' : 'green'}">${o.stop ? USE_STOP : USE_ON}</span>
+          <button class="btn sm" data-r="${o.r}" data-stop="${o.stop ? 0 : 1}" data-st="${st || 0}" type="button">${o.stop ? 'Dùng lại' : 'Ngừng dùng'}</button></li>`;
+      }).join('') || '<li class="muted">Không có mã phù hợp</li>';
+      m.$$('#cmList [data-r]').forEach(b => b.onclick = () => {
+        const stop = b.dataset.stop === '1', st = +b.dataset.st;
+        if (stop && st > 0 && !confirm(`Mã này còn tồn ${st.toLocaleString('vi-VN')} ở 3 kho.\nVẫn đánh dấu ngừng dùng?`)) return;
+        setCodeUse(kind, +b.dataset.r, stop); draw();
+      });
+    };
+    draw();
+    m.$('#cmQ').addEventListener('input', debounce(e => { q = e.target.value; draw(); }, 150));
+    m.$$('[data-show]').forEach(b => b.onclick = () => { show = b.dataset.show; m.$$('[data-show]').forEach(x => x.classList.toggle('active', x === b)); draw(); });
+    m.$('#cmNew').onclick = () => openNewCodeModal(kind, () => draw());
+    m.$('#cmClose').onclick = done;
+    setTimeout(() => m.$('#cmQ').focus(), 50);
+  }
+
+  /* ------------------------------------------------------------------ CẤP PHÁT PDA HẰNG NGÀY
+   * Tab CAP_PHAT_PDA: mỗi lượt mượn 1 dòng. Web tính trạng thái từ Ngày + Giờ trả (không chờ công thức TODAY của Sheet). */
+  const PDA = 'CAP_PHAT_PDA', PDA_DEV = 'THONG_KE_PDA';
+  const PD = { date: 1, ca: 2, kho: 3, imei: 4, name: 5, who: 6, msnv: 7, dept: 8, out: 9, back: 10, cond: 11, note: 12 };
+  const nowHM = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const caNow = () => { const h = new Date().getHours(); return h >= 6 && h < 14 ? 'Ca 1' : h >= 14 && h < 22 ? 'Ca 2' : 'Ca 3'; };
+
+  function pdaLoans(k) {
+    const s = sh(PDA); if (!s) return [];
+    const t0 = today0(), out = [];
+    for (let r = 5; r <= s.v.length; r++) {
+      const g = c => plain(val(PDA, r, c));
+      const imei = g(PD.imei), who = g(PD.who);
+      if (!imei && !who) continue;
+      const kho = g(PD.kho); if (k && kho !== k) continue;
+      const d = toDate(val(PDA, r, PD.date), true), back = g(PD.back), cond = g(PD.cond);
+      const open = !back, late = open && !!d && d < t0;
+      out.push({ r, d, ca: g(PD.ca), kho, imei, name: g(PD.name), who, msnv: g(PD.msnv), dept: g(PD.dept), out: g(PD.out), back, cond, note: g(PD.note),
+        open, late, lateDays: late ? Math.round((t0 - d) / 86400000) : 0, today: !!d && +d === +t0, bad: !!back && !!cond && cond !== 'Bình thường' });
+    }
+    return out;
+  }
+  function pdaCounts(k) {
+    const L = pdaLoans(k), openSet = new Set(L.filter(x => x.open).map(x => x.imei));
+    const devs = codes('PDA').filter(d => !k || d.kho === k), good = devs.filter(d => /^tốt$/i.test(d.st));
+    return {
+      today: L.filter(x => x.today).length, returned: L.filter(x => x.today && !x.open).length,
+      open: L.filter(x => x.open && !x.late).length, late: L.filter(x => x.late).length, bad: L.filter(x => x.today && x.bad).length,
+      ready: good.filter(d => !openSet.has(d.v)).length, good: good.length, devices: devs.length
+    };
+  }
+
+  function pdaPanel(view) {
+    const k = state.kho === 'ALL' ? null : state.kho, c = pdaCounts(k);
+    const open = pdaLoans(k).filter(x => x.open).sort((a, b) => (b.late - a.late) || ((a.d || 0) - (b.d || 0)) || a.out.localeCompare(b.out));
+    const dupes = {}; open.forEach(x => { if (x.imei) dupes[x.imei] = (dupes[x.imei] || 0) + 1; });
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <div class="kpis">
+        ${kpi('Lượt cấp hôm nay', c.today, `${c.returned} lượt đã trả`, 'blue')}
+        ${kpi('Đang mượn', c.open, 'Cấp trong hôm nay, chưa trả', c.open ? 'amber' : 'green')}
+        ${kpi('Quá hạn trả', c.late, 'Mượn từ hôm trước, chưa trả', c.late ? 'red' : 'green')}
+        ${kpi('Trả về có lỗi hôm nay', c.bad, 'Hư / rơi vỡ / mất…', c.bad ? 'red' : 'green')}
+        ${kpi('Máy sẵn sàng cấp', c.ready, c.devices ? `${c.good} máy TỐT / ${c.devices} máy khai báo` : 'Chưa khai báo máy ở Thống kê PDA', c.devices ? '' : 'amber', '#/sheet/' + PDA_DEV)}
+      </div>
+      <div class="card mt">
+        <div class="card-h"><div><h3>Máy đang được mượn${k ? ' · ' + esc(k) : ''}</h3><div class="sub" style="margin-top:3px">Quá hạn đứng đầu · bấm “Trả máy” khi nhận lại</div></div>
+          <div class="right"><button class="btn primary" id="pdaOut">＋ Cấp máy</button></div></div>
+        ${open.length ? `<ul class="list">${open.map(x => `<li class="${x.late ? 'is-late' : ''}">
+            <div class="grow"><div class="t">${esc(x.imei || '(chưa ghi IMEI)')}${x.name ? ` · <span class="muted">${esc(x.name)}</span>` : ''}${dupes[x.imei] > 1 ? ' <span class="chip red">IMEI đang mượn trùng</span>' : ''}</div>
+              <div class="s">👤 ${esc(x.who || '—')}${x.msnv ? ' (' + esc(x.msnv) + ')' : ''} · ${esc(x.kho)} · ${esc(x.ca)} · ${x.d ? dmy(isoOf(x.d)) : ''} ${esc(x.out)}${x.dept ? ' · ' + esc(x.dept) : ''}</div></div>
+            <span class="chip ${x.late ? 'red' : 'amber'}">${x.late ? `Quá hạn ${x.lateDays} ngày` : 'Đang mượn'}</span>
+            <button class="btn sm" data-ret="${x.r}">↩ Trả máy</button></li>`).join('')}</ul>`
+          : '<div class="empty">Không có máy nào đang được mượn. 👍</div>'}
+      </div>`;
+    view.prepend(wrap);
+    bindGo(wrap);
+    $('#pdaOut').onclick = () => openPdaOut();
+    $$('[data-ret]', wrap).forEach(b => b.onclick = () => openPdaReturn(+b.dataset.ret));
+  }
+
+  function openPdaOut() {
+    const k = state.kho === 'ALL' ? '' : state.kho;
+    const pre = { [PD.date]: isoOf(new Date()), [PD.ca]: caNow(), [PD.out]: nowHM() };
+    if (k) pre[PD.kho] = k;
+    openRowDrawer(PDA, null, pre);
+  }
+
+  function openPdaReturn(r) {
+    const x = pdaLoans().find(l => l.r === r); if (!x) return;
+    const conds = (dvFor(PDA, 'K', 5, 5) || ['Bình thường']).map(String);
+    const dev = codes('PDA').find(d => d.v === x.imei);
+    const m = modal(`<h3>↩ Trả máy ${esc(x.imei)}</h3>
+      <p class="muted" style="margin:0">${esc(x.name || '')} · ${esc(x.who)} · cấp ${x.d ? dmy(isoOf(x.d)) : ''} ${esc(x.out)}</p>
+      <div class="form" style="margin-top:4px">
+        <div class="field"><label for="rtT">Giờ trả</label><input class="input" id="rtT" value="${nowHM()}"></div>
+        <div class="field"><label for="rtC">Tình trạng khi trả</label><select class="select" id="rtC">${conds.map(o => `<option>${esc(o)}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label for="rtN">Ghi chú</label><input class="input" id="rtN" placeholder="Mô tả lỗi (nếu có)"></div>
+      ${dev ? `<label class="chk" id="rtDevBox" hidden><input type="checkbox" id="rtDev" checked> Cập nhật máy này ở Thống kê PDA thành <b>MỚI HƯ</b> (ngày ghi nhận lỗi = hôm nay)</label>` : ''}
+      <div class="row"><button class="btn" id="rtCancel" type="button">Hủy</button><button class="btn primary" id="rtOk" type="button">✓ Xác nhận trả</button></div>`);
+    const syncBox = () => { if (m.$('#rtDevBox')) m.$('#rtDevBox').hidden = m.$('#rtC').value === 'Bình thường'; };
+    m.$('#rtC').onchange = syncBox; syncBox();
+    m.$('#rtCancel').onclick = m.close;
+    m.$('#rtOk').onclick = () => {
+      const t = m.$('#rtT').value.trim() || nowHM(), cond = m.$('#rtC').value, note = m.$('#rtN').value.trim();
+      const changes = [{ row: r, col: PD.back, value: t }, { row: r, col: PD.cond, value: cond }];
+      if (note) changes.push({ row: r, col: PD.note, value: x.note ? x.note + ' · ' + note : note });
+      enqueue('update', { sheet: PDA, changes });
+      if (dev && cond !== 'Bình thường' && m.$('#rtDev') && m.$('#rtDev').checked) {
+        const dr = dev.r, desc = plain(val(PDA_DEV, dr, 6));
+        const dch = [{ row: dr, col: 5, value: 'MỚI HƯ' }, { row: dr, col: 7, value: isoOf(new Date()) }, { row: dr, col: 8, value: isoOf(new Date()) }];
+        dch.push({ row: dr, col: 6, value: (desc ? desc + ' · ' : '') + `${dmy(isoOf(new Date()))}: ${cond}${note ? ' – ' + note : ''} (trả bởi ${x.who})` });
+        enqueue('update', { sheet: PDA_DEV, changes: dch });
+      }
+      toast(`Đã nhận lại máy ${x.imei}${cond !== 'Bình thường' ? ' – ' + cond : ''}`, cond !== 'Bình thường' ? 'warn' : '');
+      m.close(); route(true);
+    };
+  }
+
+  function pdaAlert(view, k) {
+    if (!sh(PDA)) return;
+    const c = pdaCounts(k);
+    if (!c.late) return;
+    const wrap = document.createElement('div');
+    const go = k ? `kho:|${k}|#/sheet/${PDA}` : `#/sheet/${PDA}`;
+    wrap.innerHTML = `<div class="task-alert red" data-go="${esc(go)}" role="link" tabindex="0">${icon('phone')}<span>PDA${k ? ' · ' + esc(k) : ''}: <b>${c.late}</b> máy mượn từ hôm trước chưa trả</span><span class="go">Xem cấp phát →</span></div>`;
+    view.prepend(wrap); bindGo(wrap);
+  }
+
   /* ------------------------------------------------------------------ TASK – Dành cho Quản lý
    * Dữ liệu ở tab QL_TASK của Google Sheet (Apps Script tự tạo tab ở lần ghi đầu tiên).
    * Chống bỏ sót: bắt buộc người phụ trách + hạn chót, nhóm theo hạn (quá hạn đứng đầu),
@@ -1301,13 +1707,24 @@
   /** Tab do web tạo: nếu Sheet chưa có thì dựng bản trống trên máy để vẫn xem/nhập được. */
   function ensureLocalSheets() {
     if (!state.data || !state.data.sheets) return;
-    if (!state.data.sheets[TASK]) {
-      state.data.sheets[TASK] = {
-        v: [['QUẢN LÝ TASK – CỤM M12'], ['Dành cho Quản lý · Mỗi dòng 1 task.'], [], T_HEAD.slice()], fm: [],
-        dv: { D5: T_KHO, G5: T_PRIO, J5: T_STATUS }, local: true
-      };
-    }
-    if (state.data.order && !state.data.order.includes(TASK)) state.data.order.unshift(TASK);
+    const defs = { [TASK]: { title: 'QUẢN LÝ TASK – CỤM M12', sub: 'Dành cho Quản lý · Mỗi dòng 1 task.', headers: T_HEAD, dv: { D: T_KHO, G: T_PRIO, J: T_STATUS } }, ...(window.AUTO_LOCAL || {}) };
+    Object.keys(defs).forEach(n => {
+      const d = defs[n];
+      if (!state.data.sheets[n]) {
+        const row3 = [];
+        Object.keys(d.g || {}).forEach(L => { row3[colNum(L) - 1] = d.g[L]; });
+        const mask = d.f ? d.headers.map((_, i) => d.f.includes(colLet(i + 1)) ? '1' : '0').join('').replace(/0+$/, '') : '';
+        const dv = {};
+        Object.keys(d.dv || {}).forEach(L => { dv[L + '5'] = d.dv[L]; });
+        // fm: đánh dấu cột công thức ở dòng 5 để web khóa các cột tự tính
+        state.data.sheets[n] = { v: [[d.title], [d.sub], row3, d.headers.slice()], fm: ['', '', '', '', mask], dv, local: true };
+      }
+      const order = state.data.order;
+      if (order && !order.includes(n)) {
+        const after = (S[n] || {}).after, i = after ? order.indexOf(after) : -1;
+        if (i >= 0) order.splice(i + 1, 0, n); else if (n === TASK) order.unshift(n); else order.push(n);
+      }
+    });
   }
 
   function parseChecklist(s) {

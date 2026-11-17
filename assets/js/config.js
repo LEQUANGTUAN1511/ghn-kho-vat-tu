@@ -48,9 +48,16 @@ window.SCHEMA = {
   DM_CCDC: { title: 'Danh mục CCDC', icon: 'tool', group: 'dm', type: 'table', headerRow: 4, dataStart: 5, addRow: true, addCol: true,
     autoCode: { col: 'A', from: 'C', prefix: 'CCDC', map: { 'Quạt': 'QT', 'Bình chữa cháy': 'PC', 'Thiết bị văn phòng - IT': 'TB', 'Dụng cụ vận hành': 'VH' } } },
 
-  SO_NHAP_XUAT: { title: 'Sổ Nhập – Xuất – Điều chuyển', icon: 'swap', group: 'nx', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { E: 'NVL' }, addRow: true, addCol: true, newestFirst: true },
-  TON_KHO: { title: 'Tồn kho NVL', icon: 'layers', group: 'nx', type: 'table', headerRow: 4, dataStart: 5, groupRow: 3,
-    khoGroups: { HCM20: ['D', 'I'], ST: ['J', 'O'], TK: ['P', 'U'] } },
+  // price: khi chọn mã, tự điền Đơn giá từ danh mục (nếu ô còn trống)
+  SO_NHAP_XUAT: { title: 'Sổ Nhập – Xuất NVL', icon: 'swap', group: 'nx', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { E: 'NVL' }, addRow: true, addCol: true, newestFirst: true,
+    price: { code: 'E', to: 'N', kind: 'NVL' }, totals: true },
+  // khoGroups: mỗi kho có thể gồm nhiều vùng cột [từ, đến]
+  TON_KHO: { title: 'Tồn kho NVL', icon: 'layers', group: 'nx', type: 'table', headerRow: 4, dataStart: 5, groupRow: 3, totals: true,
+    khoGroups: { HCM20: [['D', 'I'], ['W', 'W']], ST: [['J', 'O'], ['X', 'X']], TK: [['P', 'U'], ['Y', 'Y']] } },
+  SO_NX_CCDC: { title: 'Sổ Nhập – Xuất CCDC', icon: 'swap', group: 'nx', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { E: 'CCDC' }, addRow: true, addCol: true, newestFirst: true,
+    price: { code: 'E', to: 'N', kind: 'CCDC' }, totals: true, always: true, after: 'TON_KHO' },
+  TON_KHO_CCDC: { title: 'Tồn kho CCDC', icon: 'layers', group: 'nx', type: 'table', headerRow: 4, dataStart: 5, groupRow: 3, totals: true, always: true, after: 'SO_NX_CCDC',
+    khoGroups: { HCM20: [['D', 'G'], ['Q', 'Q']], ST: [['H', 'K'], ['R', 'R']], TK: [['L', 'O'], ['S', 'S']] } },
   KIEM_KE: { title: 'Kiểm kê định kỳ', icon: 'check', group: 'nx', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { D: 'NVL' }, addRow: true, addCol: true, newestFirst: true },
 
   DINH_MUC: { title: 'Định mức Min / Max', icon: 'gauge', group: 'kh', type: 'table', headerRow: 4, dataStart: 5,
@@ -73,6 +80,8 @@ window.SCHEMA = {
 
   THONG_KE_PDA: { title: 'Thống kê PDA', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, cols: 'A:J', khoCol: 'B', addRow: true,
     params: ['M3'], paramKho: 'M3', side: [{ title: 'Bảng tổng hợp PDA (theo ô M3)', from: 'L', to: 'P', headerRow: 4, rows: 6 }, { title: 'So sánh 3 kho', from: 'M', to: 'P', headerRow: 17, rows: 3 }] },
+  CAP_PHAT_PDA: { title: 'Cấp phát PDA hằng ngày', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { D: 'PDA' }, addRow: true, addCol: true, newestFirst: true,
+    always: true, after: 'THONG_KE_PDA', pda: true },
   LICH_CV_HCM20: { title: 'Lịch CV – HCM20', icon: 'clock', group: 'tb', type: 'calendar', kho: 'HCM20' },
   LICH_CV_ST: { title: 'Lịch CV – Sóng Thần', icon: 'clock', group: 'tb', type: 'calendar', kho: 'ST' },
   LICH_CV_TK: { title: 'Lịch CV – Tân Kim', icon: 'clock', group: 'tb', type: 'calendar', kho: 'TK' }
@@ -87,3 +96,29 @@ window.CAL_DEF = {
 
 /* Các tab hệ thống do web tạo – không hiện trong menu */
 window.HIDDEN_SHEETS = ['WEB_HINH_ANH', 'WEB_NHAT_KY'];
+
+/* Tab do web tạo trên Sheet (Apps Script AUTO_SHEETS / setupV2). Khi Sheet chưa có tab,
+ * web dựng bản trống theo khai báo này để vẫn xem / nhập được (tự đồng bộ khi tab được tạo).
+ * f: các cột công thức (Sheet tự tính) · dv: dropdown · g: dòng nhóm (dòng 3) */
+window.AUTO_LOCAL = {
+  SO_NX_CCDC: {
+    title: 'SỔ NHẬP – XUẤT – ĐIỀU CHUYỂN CCDC (3 KHO)',
+    sub: 'Mỗi dòng = 1 giao dịch của 1 mã CCDC ở 1 kho. "Thu hồi nhập kho" = CCDC đã cấp phát được trả về kho. Đơn giá để trống = lấy theo DM_CCDC.',
+    headers: ['Ngày', 'Số phiếu', 'Kho', 'Loại giao dịch', 'Mã CCDC', 'Tên CCDC', 'ĐVT', 'Số lượng', 'Bộ phận / kho đối ứng', 'Người nhận / giao', 'MSNV', 'Ghi chú', 'Kiểm tra', 'Đơn giá (VNĐ)', 'Thành tiền (VNĐ)'],
+    f: 'FGMO',
+    dv: { C: ['HCM20', 'ST', 'TK'], D: ['Nhập', 'Xuất', 'Điều chuyển đi', 'Điều chuyển đến', 'Xuất hủy / hao hụt', 'Thu hồi nhập kho'] }
+  },
+  TON_KHO_CCDC: {
+    title: 'TỒN KHO CCDC (3 KHO)',
+    sub: 'Tự tính từ SO_NX_CCDC. Chỉ nhập "Tồn đầu" một lần. Bảng sẽ hiện đủ mã CCDC sau khi chạy setupV2 trong Apps Script.',
+    headers: ['Mã CCDC', 'Tên CCDC', 'ĐVT', 'Tồn đầu', 'Nhập', 'Xuất', 'Tồn cuối', 'Tồn đầu', 'Nhập', 'Xuất', 'Tồn cuối', 'Tồn đầu', 'Nhập', 'Xuất', 'Tồn cuối', 'Đơn giá (VNĐ)', 'Giá trị tồn HCM20', 'Giá trị tồn ST', 'Giá trị tồn TK', 'Tổng giá trị tồn', 'Đang sử dụng (sổ tài sản)'],
+    f: 'ABCEFGIJKMNOPQRSTU', g: { D: 'HCM20', H: 'ST', L: 'TK', P: 'GIÁ TRỊ TỒN' }
+  },
+  CAP_PHAT_PDA: {
+    title: 'CẤP PHÁT PDA HẰNG NGÀY',
+    sub: 'Mỗi lượt mượn = 1 dòng. Khi trả ghi Giờ trả + Tình trạng khi trả. IMEI lấy theo tab THONG_KE_PDA.',
+    headers: ['Ngày', 'Ca', 'Kho', 'IMEI', 'Tên thiết bị', 'Người nhận', 'MSNV', 'Bộ phận / công việc', 'Giờ cấp', 'Giờ trả', 'Tình trạng khi trả', 'Ghi chú', 'Trạng thái'],
+    f: 'EM',
+    dv: { B: ['Ca 1', 'Ca 2', 'Ca 3', 'Hành chính'], C: ['HCM20', 'ST', 'TK'], K: ['Bình thường', 'Hư màn hình', 'Hư pin / sạc', 'Lỗi phần mềm', 'Rơi vỡ', 'Mất máy', 'Khác'] }
+  }
+};

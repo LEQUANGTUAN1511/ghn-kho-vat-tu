@@ -303,6 +303,29 @@ table.tbl { border-collapse: separate; border-spacing: 0; width: 100%; font-size
 .ck-add { display: flex; gap: 8px; }
 .ck-add .input { flex: 1; }
 
+/* ---------- Danh sách lựa chọn / danh mục mã ---------- */
+.modal.wide { width: min(560px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
+.lm-list { list-style: none; margin: 14px 0 10px; padding: 0; border: 1px solid var(--line); border-radius: 10px; max-height: 300px; overflow: auto; }
+.lm-list.tall { max-height: min(420px, 55vh); margin-top: 0; }
+.lm-list li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.lm-list li:last-child { border-bottom: 0; }
+.lm-list li .grow { flex: 1; min-width: 0; }
+.lm-list li .t { font-weight: 600; }
+.lm-list li .s { color: var(--muted); font-size: 12px; }
+.lm-list li.off .t { color: var(--muted); text-decoration: line-through; }
+.icon-btn.sm { width: 28px; height: 28px; font-size: 13px; }
+.icon-btn.danger:hover { border-color: var(--red); color: var(--red); }
+.icon-btn:disabled { opacity: .35; cursor: default; }
+.lk-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+
+/* ---------- Tổng tiền · PDA ---------- */
+.totals { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--surface-2); font-size: 13px; }
+.totals .tot b { color: var(--muted); font-weight: 600; }
+.warn-text { color: var(--amber); }
+.list li.is-late { box-shadow: inset 3px 0 0 var(--red); }
+.chk { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; font-size: 13px; }
+.chk input { margin-top: 2px; accent-color: var(--brand); }
+
 @media (max-width: 1100px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kho-cards { grid-template-columns: 1fr; } }
 @media (max-width: 900px) {
   .only-mobile { display: inline-grid; }

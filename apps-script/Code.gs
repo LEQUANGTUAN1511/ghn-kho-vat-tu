@@ -50,7 +50,11 @@ function handle_(action, p) {
     switch (action) {
       case 'ping': res = { ok: true, rev: rev_(), title: ss_().getName() }; break;
       // since = số phiên bản web đang có → trả thêm danh sách tab cần tải lại (null = tải lại toàn bộ)
-      case 'rev': res = { ok: true, rev: rev_(), sheets: p.since ? changedSince_(p.since) : null }; break;
+      case 'rev':
+        var ch = p.since ? changedSince_(p.since) : null;
+        res = { ok: true, rev: rev_(), sheets: ch ? ch.sheets : null, dvSheets: ch ? ch.dv : [] };
+        break;
+      case 'setList': res = withLock_(function () { return setList_(p); }, p.sheet + '|dv'); break;
       case 'all': res = getAll_(p.sheets, p.nodv === '1' || p.nodv === 1 || p.nodv === true); break;
       case 'update': res = withLock_(function () { return update_(p); }, p.sheet); break;
       case 'append': res = withLock_(function () { return append_(p); }, p.sheet); break;
@@ -129,18 +133,21 @@ function changedSince_(since) {
   since = Number(since);
   var cur = rev_();
   if (!since || since > cur) return null;
-  if (since === cur) return [];
+  if (since === cur) return { sheets: [], dv: [] };
   var log = [];
   try { log = JSON.parse(cache_().get('CHG') || '[]'); } catch (e) { return null; }
   var rel = log.filter(function (e) { return e[0] > since; }).sort(function (a, b) { return a[0] - b[0]; });
-  var names = {}, expect = since + 1;
+  var names = {}, dv = {}, expect = since + 1;
   for (var i = 0; i < rel.length; i++) {
     if (rel[i][0] !== expect) return null;   // thiếu hoặc trùng số → không tin được
     if (rel[i][1] === '*') return null;
-    names[rel[i][1]] = true; expect++;
+    var parts = String(rel[i][1]).split('|');  // "TEN_TAB|dv" = tab đổi danh sách dropdown
+    names[parts[0]] = true;
+    if (parts[1] === 'dv') dv[parts[0]] = true;
+    expect++;
   }
   if (expect !== cur + 1) return null;
-  return withDependents_(Object.keys(names));
+  return { sheets: withDependents_(Object.keys(names)), dv: Object.keys(dv) };
 }
 
 /** Bản đồ phụ thuộc: tab nguồn → các tab có công thức tham chiếu tới nó.
@@ -227,7 +234,11 @@ function readSheet_(sh, noDv) {
 
 function enc_(v, fmt) {
   if (v === '' || v === null) return '';
-  if (v instanceof Date) return 'D:' + Utilities.formatDate(v, CFG.TZ, 'yyyy-MM-dd');
+  if (v instanceof Date) {
+    // Ô chỉ có giờ (VD 07:30 gõ trên Sheet) → Google trả về ngày 30/12/1899 → gửi dạng "HH:mm"
+    if (v.getFullYear() < 1901) return Utilities.formatDate(v, CFG.TZ, 'HH:mm');
+    return 'D:' + Utilities.formatDate(v, CFG.TZ, 'yyyy-MM-dd');
+  }
   if (typeof v === 'number') { if (fmt && fmt.indexOf('%') >= 0) return 'P:' + v; return v; }
   if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
   return String(v);
@@ -251,7 +262,21 @@ function readDV_(sh, rows, cols) {
 
 /* ============================ GHI ============================ */
 
-/* Các tab do web quản lý: tự tạo trên Sheet ở lần ghi đầu tiên. */
+/* ---------- Các tab do web quản lý ----------
+ * Tự tạo trên Sheet ở lần ghi đầu tiên, hoặc chạy setupV2() một lần để tạo sẵn.
+ * formulas: công thức dạng R1C1 (RC5 = cột 5 cùng dòng), kéo sẵn cho `rows` dòng từ dòng 5. */
+var KHO_LIST = ['HCM20', 'ST', 'TK'];
+var LOAI_GD = ['Nhập', 'Xuất', 'Điều chuyển đi', 'Điều chuyển đến', 'Xuất hủy / hao hụt'];
+var CCDC_IN = ['Nhập', 'Điều chuyển đến', 'Thu hồi nhập kho'];
+var CCDC_OUT = ['Xuất', 'Điều chuyển đi', 'Xuất hủy / hao hụt'];
+
+// Tổng SL trong sổ CCDC theo kho (dòng khoRow của DM_KHO) + mã cùng dòng + các loại giao dịch
+function sumCcdc_(khoRow, types) {
+  return types.map(function (t) {
+    return 'SUMIFS(SO_NX_CCDC!C8,SO_NX_CCDC!C3,DM_KHO!R' + khoRow + 'C1,SO_NX_CCDC!C5,RC1,SO_NX_CCDC!C4,"' + t + '")';
+  }).join('+');
+}
+
 var AUTO_SHEETS = {
   QL_TASK: {
     title: 'QUẢN LÝ TASK – CỤM M12',
@@ -262,22 +287,102 @@ var AUTO_SHEETS = {
       J: ['Chưa làm', 'Đang làm', 'Chờ duyệt', 'Tạm hoãn', 'Hoàn thành', 'Hủy'] },
     dates: ['H', 'I', 'L'],
     widths: { A: 90, B: 260, C: 260, K: 260, M: 220, N: 170 }
+  },
+
+  SO_NX_CCDC: {
+    after: 'TON_KHO', rows: 2000,
+    title: 'SỔ NHẬP – XUẤT – ĐIỀU CHUYỂN CCDC (3 KHO)',
+    sub: 'Mỗi dòng = 1 giao dịch của 1 mã CCDC ở 1 kho. Điều chuyển: ghi 2 dòng. "Thu hồi nhập kho" = CCDC đã cấp phát được trả về kho. Đơn giá để trống = lấy theo DM_CCDC.',
+    headers: ['Ngày', 'Số phiếu', 'Kho', 'Loại giao dịch', 'Mã CCDC', 'Tên CCDC', 'ĐVT', 'Số lượng', 'Bộ phận / kho đối ứng',
+      'Người nhận / giao', 'MSNV', 'Ghi chú', 'Kiểm tra', 'Đơn giá (VNĐ)', 'Thành tiền (VNĐ)'],
+    lists: { C: KHO_LIST, D: LOAI_GD.concat(['Thu hồi nhập kho']) },
+    dates: ['A'], money: ['N', 'O'], texts: ['B', 'K'],
+    formulas: {
+      F: '=IF(RC5="","",IFERROR(INDEX(DM_CCDC!R5C2:R154C2,MATCH(RC5,DM_CCDC!R5C1:R154C1,0)),"Mã sai"))',
+      G: '=IF(RC5="","",IFERROR(INDEX(DM_CCDC!R5C4:R154C4,MATCH(RC5,DM_CCDC!R5C1:R154C1,0)),""))',
+      M: '=IF(RC5="","",IF(RC6="Mã sai","Mã sai",IF(OR(RC1="",RC3="",RC4="",RC8=""),"Thiếu dữ liệu",IF(AND(OR(RC4="Điều chuyển đi",RC4="Điều chuyển đến"),RC9=""),"Thiếu kho đối ứng",IF(AND(RC4="Xuất",RC10=""),"Thiếu người nhận","OK")))))',
+      O: '=IF(OR(RC5="",RC8=""),"",RC8*IF(RC14<>"",RC14,IFERROR(INDEX(DM_CCDC!R5C5:R154C5,MATCH(RC5,DM_CCDC!R5C1:R154C1,0)),0)))'
+    },
+    widths: { E: 110, F: 220, I: 150, J: 150, L: 220 }
+  },
+
+  TON_KHO_CCDC: {
+    after: 'SO_NX_CCDC', rows: 150,
+    title: 'TỒN KHO CCDC (3 KHO)',
+    sub: 'Tự tính từ SO_NX_CCDC. Chỉ nhập "Tồn đầu" một lần (số kiểm kê ngày bắt đầu). Giá trị tồn theo đơn giá DM_CCDC. "Đang sử dụng" lấy từ TAI_SAN_CCDC (chưa thanh lý).',
+    headers: ['Mã CCDC', 'Tên CCDC', 'ĐVT',
+      'Tồn đầu', 'Nhập', 'Xuất', 'Tồn cuối', 'Tồn đầu', 'Nhập', 'Xuất', 'Tồn cuối', 'Tồn đầu', 'Nhập', 'Xuất', 'Tồn cuối',
+      'Đơn giá (VNĐ)', 'Giá trị tồn HCM20', 'Giá trị tồn ST', 'Giá trị tồn TK', 'Tổng giá trị tồn', 'Đang sử dụng (sổ tài sản)'],
+    groupRow: { D: '=DM_KHO!R5C1&" – "&DM_KHO!R5C2', H: '=DM_KHO!R6C1&" – "&DM_KHO!R6C2', L: '=DM_KHO!R7C1&" – "&DM_KHO!R7C2', P: 'GIÁ TRỊ TỒN (theo đơn giá danh mục)' },
+    money: ['P', 'Q', 'R', 'S', 'T'],
+    formulas: {
+      A: '=IF(DM_CCDC!RC1="","",DM_CCDC!RC1)',
+      B: '=IF(RC1="","",DM_CCDC!RC2)',
+      C: '=IF(RC1="","",DM_CCDC!RC4)',
+      E: '=IF(RC1="","",' + sumCcdc_(5, CCDC_IN) + ')',
+      F: '=IF(RC1="","",' + sumCcdc_(5, CCDC_OUT) + ')',
+      G: '=IF(RC1="","",N(RC4)+RC5-RC6)',
+      I: '=IF(RC1="","",' + sumCcdc_(6, CCDC_IN) + ')',
+      J: '=IF(RC1="","",' + sumCcdc_(6, CCDC_OUT) + ')',
+      K: '=IF(RC1="","",N(RC8)+RC9-RC10)',
+      M: '=IF(RC1="","",' + sumCcdc_(7, CCDC_IN) + ')',
+      N: '=IF(RC1="","",' + sumCcdc_(7, CCDC_OUT) + ')',
+      O: '=IF(RC1="","",N(RC12)+RC13-RC14)',
+      P: '=IF(RC1="","",N(DM_CCDC!RC5))',
+      Q: '=IF(RC1="","",RC7*RC16)',
+      R: '=IF(RC1="","",RC11*RC16)',
+      S: '=IF(RC1="","",RC15*RC16)',
+      T: '=IF(RC1="","",RC17+RC18+RC19)',
+      U: '=IF(RC1="","",SUMIFS(TAI_SAN_CCDC!C5,TAI_SAN_CCDC!C2,RC1,TAI_SAN_CCDC!C9,"<>Đã thanh lý"))'
+    },
+    widths: { B: 220 }
+  },
+
+  CAP_PHAT_PDA: {
+    after: 'THONG_KE_PDA', rows: 2000,
+    title: 'CẤP PHÁT PDA HẰNG NGÀY',
+    sub: 'Mỗi lượt mượn = 1 dòng: ngày, ca, kho, IMEI, người nhận, giờ cấp. Khi trả ghi Giờ trả + Tình trạng khi trả. Trạng thái tự tính. IMEI lấy theo tab THONG_KE_PDA.',
+    headers: ['Ngày', 'Ca', 'Kho', 'IMEI', 'Tên thiết bị', 'Người nhận', 'MSNV', 'Bộ phận / công việc', 'Giờ cấp', 'Giờ trả',
+      'Tình trạng khi trả', 'Ghi chú', 'Trạng thái'],
+    lists: { B: ['Ca 1', 'Ca 2', 'Ca 3', 'Hành chính'], C: KHO_LIST,
+      K: ['Bình thường', 'Hư màn hình', 'Hư pin / sạc', 'Lỗi phần mềm', 'Rơi vỡ', 'Mất máy', 'Khác'] },
+    dates: ['A'], texts: ['D', 'G', 'I', 'J'],
+    formulas: {
+      E: '=IF(RC4="","",IFERROR(INDEX(THONG_KE_PDA!R5C4:R204C4,MATCH(RC4&"",ARRAYFORMULA(THONG_KE_PDA!R5C3:R204C3&""),0)),"IMEI chưa khai báo"))',
+      M: '=IF(AND(RC4="",RC6=""),"",IF(RC10="",IF(AND(RC1<>"",RC1<TODAY()),"QUÁ HẠN TRẢ","Đang mượn"),IF(OR(RC11="",RC11="Bình thường"),"Đã trả","Đã trả – có lỗi")))'
+    },
+    widths: { D: 150, E: 160, F: 160, H: 160, L: 200 }
   }
 };
 
+function ensureRows_(sh, n) { if (sh.getMaxRows() < n) sh.insertRowsAfter(sh.getMaxRows(), n - sh.getMaxRows()); }
+
 function createAutoSheet_(name) {
-  var d = AUTO_SHEETS[name], sh = ss_().insertSheet(name), n = d.headers.length;
+  var d = AUTO_SHEETS[name], ss = ss_(), n = d.headers.length, rows = d.rows || 996, last = 4 + rows;
+  var after = d.after && ss.getSheetByName(d.after);
+  var sh = after ? ss.insertSheet(name, after.getIndex()) : ss.insertSheet(name);
+  ensureRows_(sh, last);
   sh.getRange('A1').setValue(d.title).setFontWeight('bold').setFontSize(14);
   sh.getRange('A2').setValue(d.sub).setFontColor('#5d706e');
-  sh.getRange(4, 1, 1, n).setValues([d.headers]).setFontWeight('bold').setBackground('#0f3d3a').setFontColor('#ffffff').setWrap(true);
+  sh.getRange(4, 1, 1, n).setValues([d.headers]).setFontWeight('bold').setBackground('#0f3d3a').setFontColor('#ffffff').setWrap(true).setVerticalAlignment('middle');
   sh.setFrozenRows(4);
-  Object.keys(d.lists).forEach(function (L) {
-    var rule = SpreadsheetApp.newDataValidation().requireValueInList(d.lists[L], true).setAllowInvalid(true).build();
-    sh.getRange(L + '5:' + L + '1000').setDataValidation(rule);
+  Object.keys(d.groupRow || {}).forEach(function (L) {
+    var c = sh.getRange(L + '3'), v = d.groupRow[L];
+    if (v.charAt(0) === '=') c.setFormulaR1C1(v); else c.setValue(v);
+    c.setFontWeight('bold').setFontColor('#0e8578');
   });
-  d.dates.forEach(function (L) { sh.getRange(L + '5:' + L + '1000').setNumberFormat('dd/mm/yyyy'); });
-  sh.getRange('A5:' + colLetter_(n) + '1000').setVerticalAlignment('top').setWrap(true);
-  Object.keys(d.widths).forEach(function (L) { sh.setColumnWidth(colNum_(L), d.widths[L]); });
+  Object.keys(d.lists || {}).forEach(function (L) {
+    var rule = SpreadsheetApp.newDataValidation().requireValueInList(d.lists[L], true).setAllowInvalid(true).build();
+    sh.getRange(L + '5:' + L + last).setDataValidation(rule);
+  });
+  (d.dates || []).forEach(function (L) { sh.getRange(L + '5:' + L + last).setNumberFormat('dd/mm/yyyy'); });
+  (d.money || []).forEach(function (L) { sh.getRange(L + '5:' + L + last).setNumberFormat('#,##0'); });
+  (d.texts || []).forEach(function (L) { sh.getRange(L + '5:' + L + last).setNumberFormat('@'); });
+  Object.keys(d.formulas || {}).forEach(function (L) {
+    sh.getRange(L + '5:' + L + last).setFormulaR1C1(d.formulas[L]).setFontColor('#5d706e');
+  });
+  sh.getRange('A5:' + colLetter_(n) + last).setVerticalAlignment('top');
+  Object.keys(d.widths || {}).forEach(function (L) { sh.setColumnWidth(colNum_(L), d.widths[L]); });
   try { cache_().remove('DEPS'); } catch (e) {}
   return sh;
 }
@@ -294,6 +399,83 @@ function setupTaskSheet() {
   sheet_('QL_TASK');
   return 'Đã có tab QL_TASK';
 }
+
+/** Thêm cột vào tab có sẵn – chỉ khi ô tiêu đề còn trống, nên chạy lại nhiều lần vẫn an toàn. */
+function addCols_(sh, specs, last, out) {
+  // Tab có thể chỉ có đúng số cột / dòng đang dùng → thêm cột, dòng trống trước khi ghi
+  var needCol = Math.max.apply(null, specs.map(function (s) { return colNum_(s.L); }));
+  if (sh.getMaxColumns() < needCol) sh.insertColumnsAfter(sh.getMaxColumns(), needCol - sh.getMaxColumns());
+  ensureRows_(sh, last);
+  specs.forEach(function (s) {
+    var head = sh.getRange(s.L + '4');
+    var cur = String(head.getValue()).trim();
+    if (cur === s.h) { out.push(sh.getName() + '!' + s.L + ': đã có'); return; }
+    if (cur) { out.push(sh.getName() + '!' + s.L + ': BỎ QUA – ô tiêu đề đang là "' + cur + '"'); return; }
+    sh.getRange(colLetter_(colNum_(s.L) - 1) + '4').copyTo(head, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    head.setValue(s.h);
+    var rng = sh.getRange(s.L + '5:' + s.L + last);
+    if (s.f) rng.setFormulaR1C1(s.f).setFontColor('#5d706e');
+    if (s.fmt) rng.setNumberFormat(s.fmt);
+    if (s.g) sh.getRange(s.L + '3').setValue(s.g).setFontWeight('bold');
+    out.push(sh.getName() + '!' + s.L + ': đã thêm "' + s.h + '"');
+  });
+}
+
+/**
+ * CHẠY 1 LẦN sau khi dán Code.gs mới (chọn hàm setupV2 → ▶ Chạy). Chạy lại vẫn an toàn.
+ *  - SO_NHAP_XUAT: thêm Đơn giá (N) + Thành tiền (O)
+ *  - TON_KHO: thêm Đơn giá + Giá trị tồn từng kho + Tổng (V–Z)
+ *  - Tạo tab SO_NX_CCDC, TON_KHO_CCDC, CAP_PHAT_PDA, QL_TASK
+ *  - Bổ sung mục mới vào tab HUONG_DAN
+ */
+function setupV2() {
+  var ss = ss_(), out = [];
+  ['SO_NX_CCDC', 'TON_KHO_CCDC', 'CAP_PHAT_PDA', 'QL_TASK'].forEach(function (n) {
+    if (ss.getSheetByName(n)) out.push(n + ': đã có'); else { createAutoSheet_(n); out.push(n + ': đã tạo'); }
+  });
+  var nx = ss.getSheetByName('SO_NHAP_XUAT');
+  if (nx) addCols_(nx, [
+    { L: 'N', h: 'Đơn giá (VNĐ)', fmt: '#,##0' },
+    { L: 'O', h: 'Thành tiền (VNĐ)', fmt: '#,##0',
+      f: '=IF(OR(RC5="",RC8=""),"",RC8*IF(RC14<>"",RC14,IFERROR(INDEX(DM_NVL!R5C5:R154C5,MATCH(RC5,DM_NVL!R5C1:R154C1,0)),0)))' }
+  ], Math.max(nx.getMaxRows(), 2504), out);
+  var tk = ss.getSheetByName('TON_KHO');
+  if (tk) addCols_(tk, [
+    { L: 'V', h: 'Đơn giá (VNĐ)', fmt: '#,##0', g: 'GIÁ TRỊ TỒN (theo đơn giá danh mục)', f: '=IF(RC1="","",N(DM_NVL!RC5))' },
+    { L: 'W', h: 'Giá trị tồn HCM20', fmt: '#,##0', f: '=IF(RC1="","",RC7*RC22)' },
+    { L: 'X', h: 'Giá trị tồn ST', fmt: '#,##0', f: '=IF(RC1="","",RC13*RC22)' },
+    { L: 'Y', h: 'Giá trị tồn TK', fmt: '#,##0', f: '=IF(RC1="","",RC19*RC22)' },
+    { L: 'Z', h: 'Tổng giá trị tồn', fmt: '#,##0', f: '=IF(RC1="","",RC23+RC24+RC25)' }
+  ], 154, out);
+  var hd = ss.getSheetByName('HUONG_DAN');
+  if (hd) {
+    var colA = hd.getRange(1, 1, Math.max(hd.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
+    if (colA.indexOf(GUIDE_V2[0][0]) >= 0) out.push('HUONG_DAN: đã có mục bổ sung');
+    else {
+      var start = hd.getLastRow() + 2;
+      hd.getRange(start, 1, GUIDE_V2.length, 3).setValues(GUIDE_V2.map(function (r) { return [r[0] || '', r[1] || '', r[2] || '']; }));
+      hd.getRange(start, 1).setFontWeight('bold');
+      hd.getRange(start, 3, GUIDE_V2.length, 1).setWrap(true);
+      out.push('HUONG_DAN: đã thêm ' + (GUIDE_V2.length - 1) + ' dòng');
+    }
+  }
+  try { cache_().remove('DEPS'); } catch (e) {}
+  bumpRev_('*');
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
+
+var GUIDE_V2 = [
+  ['BỔ SUNG TRÊN WEB (11/2026)'],
+  ['', 'SO_NHAP_XUAT', 'Thêm cột Đơn giá (để trống = lấy đơn giá trong DM_NVL; web tự điền khi chọn mã) và Thành tiền = Số lượng × Đơn giá (tự tính).'],
+  ['', 'TON_KHO', 'Thêm Đơn giá và Giá trị tồn từng kho + Tổng giá trị tồn (tính theo đơn giá DM_NVL).'],
+  ['', 'SO_NX_CCDC', 'Sổ nhập / xuất / điều chuyển CCDC cho 3 kho, cách ghi giống sổ NVL, có Đơn giá – Thành tiền. "Thu hồi nhập kho" = CCDC đã cấp phát được trả lại kho.'],
+  ['', 'TON_KHO_CCDC', 'Tồn kho CCDC từng kho, tự tính từ SO_NX_CCDC; chỉ nhập "Tồn đầu" một lần. Có giá trị tồn và số đang sử dụng (từ TAI_SAN_CCDC).'],
+  ['', 'CAP_PHAT_PDA', 'Cấp phát PDA hằng ngày: mỗi lượt mượn 1 dòng (ngày, ca, kho, IMEI, người nhận, giờ cấp). Khi trả ghi giờ trả và tình trạng. Trạng thái tự tính: Đang mượn / QUÁ HẠN TRẢ / Đã trả.'],
+  ['', 'QL_TASK', 'Task dành cho quản lý: bắt buộc người phụ trách và hạn chót, có checklist từng bước, cảnh báo quá hạn.'],
+  ['', 'WEB_HINH_ANH', 'Do web tự ghi: link ảnh đính kèm theo từng dòng. Không sửa tay.'],
+  ['', 'WEB_NHAT_KY', 'Do web tự ghi: nhật ký mọi thay đổi (ai, lúc nào, ô nào, giá trị cũ / mới). Không sửa tay.']
+];
 
 function dec_(v) {
   if (v === null || v === undefined) return '';
@@ -368,6 +550,38 @@ function clearRow_(p) {
   for (var c = 0; c < lastCol; c++) if (!forms[c]) sh.getRange(row, c + 1).clearContent();
   log_(p, 'Xóa dòng', sh.getName(), 'Dòng ' + row, vals.join(' | '), '');
   return { ok: true };
+}
+
+/** Sửa danh sách lựa chọn của dropdown 1 cột (thêm / bớt lựa chọn).
+ *  Chỉ thay quy tắc ở những ô đang có dropdown dạng danh sách → giữ đúng phạm vi cũ.
+ *  Ô đã nhập giá trị cũ vẫn giữ nguyên (không xóa dữ liệu). */
+function setList_(p) {
+  var sh = sheet_(p.sheet), c = colNum_(String(p.col)), start = Number(p.dataStart) || 5;
+  var seen = {}, values = [];
+  (p.values || []).forEach(function (v) { v = String(v).trim(); if (v && !seen[v]) { seen[v] = true; values.push(v); } });
+  if (!values.length) throw new Error('Danh sách phải còn ít nhất 1 lựa chọn');
+  if (values.join(',').length > 9000) throw new Error('Danh sách quá dài');
+  var n = Math.max(sh.getMaxRows() - start + 1, 1);
+  var rng = sh.getRange(start, c, n, 1), rules = rng.getDataValidations();
+  var T = SpreadsheetApp.DataValidationCriteria, base = null, ranged = false;
+  for (var r = 0; r < n; r++) {
+    var dv = rules[r][0]; if (!dv) continue;
+    var t = dv.getCriteriaType();
+    if (t === T.VALUE_IN_LIST && !base) base = dv;
+    if (t === T.VALUE_IN_RANGE) ranged = true;
+  }
+  if (!base) {
+    if (ranged) throw new Error('Dropdown cột ' + p.col + ' lấy từ một vùng trên Sheet – hãy sửa trực tiếp vùng đó');
+    throw new Error('Cột ' + p.col + ' chưa có dropdown');
+  }
+  var nr = base.copy().requireValueInList(values, true).build(), count = 0;
+  for (var k = 0; k < n; k++) {
+    var x = rules[k][0];
+    if (x && x.getCriteriaType() === T.VALUE_IN_LIST) { rules[k][0] = nr; count++; }
+  }
+  rng.setDataValidations(rules);
+  log_(p, 'Sửa danh sách', sh.getName(), 'Cột ' + p.col, '', values.join(', '));
+  return { ok: true, cells: count, values: values };
 }
 
 /** Bổ sung hạng mục (cột mới) ở bên phải bảng */
