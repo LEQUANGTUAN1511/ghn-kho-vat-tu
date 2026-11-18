@@ -38,6 +38,7 @@ window.NAV_GROUPS = [
 window.SCHEMA = {
   // Dành cho Quản lý – tab do web tạo trên Sheet (always: hiện trong menu kể cả khi Sheet chưa có tab)
   QL_TASK: { title: 'Task', icon: 'task', group: 'ql', type: 'task', headerRow: 4, dataStart: 5, khoCol: 'D', addRow: true, always: true },
+  DV_MUA_NGOAI: { title: 'Dịch vụ mua ngoài', icon: 'service', group: 'ql', type: 'dv', headerRow: 4, dataStart: 5, khoCol: 'C', addRow: true, always: true, after: 'QL_TASK' },
 
   HUONG_DAN: { title: 'Hướng dẫn sử dụng', icon: 'book', group: 'other', type: 'doc' },
   DASHBOARD: { title: 'Dashboard (Sheet)', icon: 'chart', group: 'other', type: 'report', headerRow: 4, dataStart: 5 },
@@ -101,6 +102,13 @@ window.HIDDEN_SHEETS = ['WEB_HINH_ANH', 'WEB_NHAT_KY'];
  * web dựng bản trống theo khai báo này để vẫn xem / nhập được (tự đồng bộ khi tab được tạo).
  * f: các cột công thức (Sheet tự tính) · dv: dropdown · g: dòng nhóm (dòng 3) */
 window.AUTO_LOCAL = {
+  DV_MUA_NGOAI: {
+    title: 'DỊCH VỤ MUA NGOÀI – CỤM M12',
+    sub: 'Mua CCDC ngoài hệ thống kho hoặc dịch vụ nhà cung cấp. Tab sẽ được tạo trên Google Sheet khi có yêu cầu đầu tiên (hoặc chạy setupV3).',
+    headers: ['Mã yêu cầu', 'Ngày yêu cầu', 'Kho', 'Loại yêu cầu', 'Mức độ', 'Nội dung yêu cầu', 'Chi tiết / số lượng', 'Bộ phận yêu cầu', 'Người yêu cầu', 'Người thực hiện', 'Người duyệt yêu cầu', 'Tiến độ', 'Ngày duyệt', 'Bắt đầu dự kiến', 'Hoàn thành dự kiến', 'Hoàn thành thực tế', 'Nhà cung cấp', 'Chi phí dự kiến (VNĐ)', 'Chi phí thực tế (VNĐ)', 'Giải trình', 'Chứng từ / số phiếu', 'Tình trạng hạn', 'Cập nhật lần cuối'],
+    f: 'V',
+    dv: { C: ['Chung', 'HCM20', 'ST', 'TK'], D: ['Dịch vụ', 'CCDC ngoài hệ thống', 'Sửa chữa', 'Khác'], E: ['Khẩn cấp', 'Cao', 'Bình thường'], L: ['Đang báo giá', 'Chờ duyệt', 'Đã duyệt', 'Đang thực hiện', 'Chờ nghiệm thu', 'Hoàn thành', 'Từ chối', 'Hủy'] }
+  },
   SO_NX_CCDC: {
     title: 'SỔ NHẬP – XUẤT – ĐIỀU CHUYỂN CCDC (3 KHO)',
     sub: 'Mỗi dòng = 1 giao dịch của 1 mã CCDC ở 1 kho. "Thu hồi nhập kho" = CCDC đã cấp phát được trả về kho. Đơn giá để trống = lấy theo DM_CCDC.',

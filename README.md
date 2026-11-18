@@ -7,7 +7,7 @@ Trang web quản lý kho vật tư cho 3 kho: **HCM20 · Sóng Thần (ST) · T�
 
 | Nhóm | Chi tiết |
 |---|---|
-| **Đủ các tab của Sheet** | HUONG_DAN, DASHBOARD, THONG_KE_PDA, CAP_PHAT_PDA, DM_KHO, DM_NVL, DM_CCDC, SO_NHAP_XUAT, TON_KHO, SO_NX_CCDC, TON_KHO_CCDC, QL_TASK, DINH_MUC, KH_NVL_THANG, KH_CCDC_QUY, TAI_SAN_CCDC, HU_HONG, BC_HU_HONG, THANH_LY, KIEM_KE, LICH_EVENT, CHECKLIST_EVENT, LICH_CV_HCM20, LICH_CV_ST, LICH_CV_TK. Tab mới thêm vào Sheet sau này cũng tự hiện trong menu. |
+| **Đủ các tab của Sheet** | HUONG_DAN, DASHBOARD, QL_TASK, DV_MUA_NGOAI, THONG_KE_PDA, CAP_PHAT_PDA, DM_KHO, DM_NVL, DM_CCDC, SO_NHAP_XUAT, TON_KHO, SO_NX_CCDC, TON_KHO_CCDC, DINH_MUC, KH_NVL_THANG, KH_CCDC_QUY, TAI_SAN_CCDC, HU_HONG, BC_HU_HONG, THANH_LY, KIEM_KE, LICH_EVENT, CHECKLIST_EVENT, LICH_CV_HCM20, LICH_CV_ST, LICH_CV_TK. Tab mới thêm vào Sheet sau này cũng tự hiện trong menu. |
 | **Sửa trực tiếp** | Bấm vào ô để sửa (Enter lưu, Esc hủy, Tab sang ô kế). Có dropdown giống trong Sheet, tra mã NVL/CCDC, chọn ngày. Ô công thức được khóa, Google Sheet tự tính lại. |
 | **Nhập / xóa dữ liệu** | “＋ Thêm dòng” ghi vào dòng trống đầu tiên và tự kéo công thức. 🗑 xóa nội dung ô nhập nhưng giữ công thức. Mã NVL/CCDC mới được gợi ý tự động theo nhóm. |
 | **Bổ sung hạng mục** | “＋ Hạng mục” thêm cột mới vào bên phải bảng trên Sheet. |
@@ -176,6 +176,68 @@ Menu **Dành cho Quản lý → Task**. Dữ liệu nằm ở tab `QL_TASK` củ
 4. **Đầu ngày (5 phút):** mở tab *Quá hạn* và *Hôm nay*, xử lý hoặc dời hạn kèm ghi chú lý do. Đừng để task quá hạn mà không ai biết.
 5. **Cuối tuần (15 phút):** nhóm theo *Người phụ trách*, rà tab *7 ngày tới* và mục *Dễ bị sót*; đóng hoặc hủy task không còn cần.
 6. **“Chờ duyệt”** dùng khi người làm đã xong và đang chờ quản lý kiểm tra; quản lý duyệt xong mới chuyển sang **Hoàn thành**.
+
+## Dành cho Quản lý · Dịch vụ mua ngoài
+
+Dùng để mua CCDC không có trong hệ thống kho, hoặc thuê dịch vụ nhà cung cấp (vệ sinh máy lạnh, xịt côn trùng, sửa chữa nhà vệ sinh…). Dữ liệu nằm ở tab `DV_MUA_NGOAI`, tab này được tạo khi có yêu cầu đầu tiên hoặc khi chạy `setupV3`.
+
+**Cập nhật lên web đang chạy:** dán lại `Code.gs` → 💾 Lưu → chạy **`setupV3`** (tạo tab và thêm mục vào HUONG_DAN) → triển khai **Phiên bản mới**. Sau đó tải lên GitHub: `assets/js/app.js`, `assets/js/config.js`, `assets/css/style.css`, `apps-script/Code.gs`.
+
+| Phần (thứ tự hiển thị) | Thông tin |
+|---|---|
+| ① Thông tin yêu cầu | Mã (tự sinh DV26-001…), ngày yêu cầu, kho, loại (Dịch vụ / CCDC ngoài hệ thống / Sửa chữa / Khác), mức độ, **nội dung**, chi tiết / số lượng, **bộ phận yêu cầu**, người yêu cầu |
+| ② Người thực hiện & tiến độ | **Người thực hiện**, tiến độ hiện tại, nút chuyển bước |
+| ③ Timeline dự kiến | Bắt đầu dự kiến, **hoàn thành dự kiến**, hoàn thành thực tế |
+| ④ Nhà cung cấp & chi phí | Nhà cung cấp, chi phí dự kiến, chi phí thực tế, chứng từ / số phiếu |
+| ⑤ Giải trình | Bắt buộc khi quá hạn, xong trễ, vượt chi phí, từ chối hoặc hủy |
+
+**Tiến độ:** Đang báo giá → Chờ duyệt → Đã duyệt → Đang thực hiện → Chờ nghiệm thu → Hoàn thành (hoặc dừng ở Từ chối / Hủy).
+- Trong chi tiết yêu cầu có nút chuyển sang bước kế tiếp.
+- Duyệt / Từ chối tự ghi ngày duyệt và người duyệt; Bắt đầu thực hiện tự ghi ngày bắt đầu; Nghiệm thu tự ghi ngày hoàn thành.
+- Từ bước *Chờ duyệt* trở đi bắt buộc có người duyệt.
+
+**Theo dõi:**
+- Chỉ số: đang xử lý (tổng giá trị), chờ duyệt, quá hạn timeline, thiếu giải trình, hoàn thành trong tháng (% đúng hạn, chi phí).
+- Tab lọc nhanh; nhóm theo tiến độ / kho / bộ phận / người xử lý / loại; đính kèm ảnh báo giá, hiện trường, nghiệm thu.
+- Menu và trang Tổng quan / trang kho báo số yêu cầu quá hạn và chờ duyệt.
+- Cột *Tình trạng hạn* trên Sheet tự tính (Trong hạn / Sắp đến hạn / QUÁ HẠN n ngày / Đúng hạn / Trễ n ngày).
+
+## Hệ thống · Phân quyền truy cập (V4)
+
+**Cập nhật (làm 1 lần):** dán lại `Code.gs` → 💾 Lưu → chọn hàm **`setupV4`** → ▶ Chạy → triển khai **Phiên bản mới**. Sau đó tải lên GitHub: `index.html`, `assets/js/app.js`, `assets/js/config.js`, `assets/css/style.css`, `apps-script/Code.gs`.
+
+`setupV4` làm 2 việc:
+- tạo tab ẩn `WEB_PHAN_QUYEN` (danh sách tài khoản);
+- đổi tên cột ở `DV_MUA_NGOAI`: "Người xử lý" → **Người thực hiện**, "Người duyệt" → **Người duyệt yêu cầu**.
+
+**Cấp quyền:** đăng nhập bằng mã chung (Quản trị) → menu **Hệ thống → Phân quyền truy cập** → **＋ Thêm tài khoản**. Nhập họ tên, bộ phận, chọn vai trò, đánh dấu *Người duyệt yêu cầu* nếu cần → **Lưu** → gửi mã truy cập riêng cho từng người.
+
+| Quyền | Người xem | Người chỉnh sửa | Người duyệt yêu cầu* | Quản trị |
+|---|:-:|:-:|:-:|:-:|
+| Xem dữ liệu, báo cáo, tải Excel | ✓ | ✓ | ✓ | ✓ |
+| Thêm / sửa / xóa dữ liệu, tải ảnh | — | ✓ | — | ✓ |
+| Sửa dropdown, thêm mã NVL / CCDC | — | ✓ | — | ✓ |
+| Tạo, cập nhật Task và Dịch vụ mua ngoài | — | ✓ | — | ✓ |
+| Duyệt / Từ chối (Dành cho Quản lý) | — | — | ✓ | ✓ |
+| Sao lưu ngay | — | ✓ | — | ✓ |
+| Quản lý phân quyền | — | — | — | ✓ |
+
+\* *Người duyệt yêu cầu* là quyền **cộng thêm**, gắn cho tài khoản Người xem hoặc Người chỉnh sửa.
+
+**Lưu ý:**
+- **Kiểm tra ở máy chủ:** Apps Script kiểm tra quyền trên máy chủ, nên sửa giao diện cũng không vượt quyền được.
+- **Mã không lộ ra ngoài:** tab `WEB_PHAN_QUYEN` được ẩn và không bao giờ gửi về web, trừ cho Quản trị ở trang Phân quyền.
+- **Nhật ký đúng người:** tên ghi trong Nhật ký thay đổi lấy theo tài khoản, không theo tên tự gõ.
+- **Giữ kín mã chung:** sau khi cấp mã riêng cho mọi người, nên đổi mã chung (sửa và chạy lại `setPasscode`) và chỉ Quản trị giữ.
+- **Người đang dùng mã chung:** vẫn đăng nhập được với quyền Quản trị cho tới khi bạn đổi mã chung.
+
+### Dịch vụ mua ngoài: tách Người thực hiện và Người duyệt
+Form chi tiết giờ có 6 phần: ① Thông tin yêu cầu · ② **Người thực hiện & tiến độ** · ③ Timeline · ④ Nhà cung cấp & chi phí · ⑤ **Phê duyệt** · ⑥ Giải trình.
+
+- **Người thực hiện** dùng các nút trong phần ②: Gửi duyệt → (sau khi được duyệt) Bắt đầu thực hiện → Bàn giao – chờ nghiệm thu → Nghiệm thu – Hoàn thành; Hủy / Mở lại.
+- **Người duyệt yêu cầu** dùng nút ✓ Duyệt / ✕ Từ chối trong phần ⑤. Nút này chỉ hiện với tài khoản có quyền duyệt; người khác thấy dòng "Đang chờ … duyệt". Ngày duyệt được ghi tự động.
+- Bị từ chối thì người thực hiện có nút **Gửi duyệt lại**.
+- Task đang "Chờ duyệt" cũng chỉ Người duyệt yêu cầu mới bấm **Duyệt hoàn thành** được.
 
 ## Thêm / bớt lựa chọn dropdown và mã NVL, CCDC
 

@@ -19,7 +19,7 @@
     kho: LS.get('kho', 'ALL'),
     queue: LS.get('queue', []),
     apiUrl: LS.get('apiUrl', '') || C.API_URL || '',
-    key: LS.get('key', ''), user: LS.get('user', ''),
+    key: LS.get('key', ''), user: LS.get('user', ''), me: LS.get('me', null),
     syncing: false, online: true, lastSync: null,
     views: {}, charts: [], editing: false, pendingRender: false
   };
@@ -107,8 +107,10 @@
     image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="16" r="1.3"/>',
     file: '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/>',
-    task: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8l1.5 1.5L12 7M8 14l1.5 1.5L12 13M14 8.5h3M14 14.5h3"/>'
+    task: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8l1.5 1.5L12 7M8 14l1.5 1.5L12 13M14 8.5h3M14 14.5h3"/>',
+    service: '<path d="M4 7h11v13H4z"/><path d="M7 11h5M7 15h3"/><path d="M15 9l3.5-3.5a2 2 0 0 1 3 3L18 12"/><path d="M15 12l3-3"/>'
   };
   const icon = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${IC[n] || IC.file}</svg>`;
 
@@ -118,7 +120,7 @@
   const valA = (n, A1) => { const p = ref(A1); return val(n, p.r, p.c); };
   const isF = (n, r, c) => { const s = sh(n); const f = s && s.fm && s.fm[r - 1]; return !!f && f[c - 1] === '1'; };
   const OVERRIDE = { KH_NVL_THANG: ['B4'], KH_CCDC_QUY: ['B4'] };
-  const canEditCell = (n, r, c) => !isF(n, r, c) || (OVERRIDE[n] || []).includes(colLet(c) + r);
+  const canEditCell = (n, r, c) => canEdit() && (!isF(n, r, c) || (OVERRIDE[n] || []).includes(colLet(c) + r));
   function colComputed(n, c, start) {
     const s = sh(n); if (!s || !s.fm) return false;
     for (let r = start - 1; r < s.fm.length; r++) if (s.fm[r] && s.fm[r][c - 1] === '1') return true;
@@ -289,10 +291,33 @@
     let j;
     try { j = await res.json(); } catch (e) { throw Object.assign(new Error('Phản hồi không hợp lệ từ Apps Script (kiểm tra quyền truy cập "Anyone")'), { net: true }); }
     if (!j.ok) {
-      if (String(j.error).startsWith('AUTH')) { state.authFail = true; showLogin(true); throw Object.assign(new Error('Sai mã truy cập'), { auth: true }); }
+      if (String(j.error).startsWith('AUTH')) { state.authFail = true; showLogin(true, String(j.error).replace(/^AUTH:\s*/, '')); throw Object.assign(new Error('Sai mã truy cập'), { auth: true }); }
+      if (String(j.error).startsWith('PERM')) throw Object.assign(new Error(String(j.error).replace(/^PERM:\s*/, '')), { perm: true });
       throw new Error(j.error || 'Lỗi không xác định');
     }
+    if (j.me) setMe(j.me);
     return j;
+  }
+
+  /* ------------------------------------------------------------------ quyền truy cập
+   * me = { name, role: viewer | editor | admin, approver, master } do Apps Script trả về.
+   * Apps Script bản cũ không trả `me` → coi như toàn quyền (giữ cách cũ). Máy chủ mới tự kiểm tra lại quyền. */
+  const ROLE_LABEL = { viewer: 'Người xem', editor: 'Người chỉnh sửa', admin: 'Quản trị' };
+  const canEdit = () => !state.me || state.me.role !== 'viewer';
+  const canApprove = () => !state.me || !!state.me.approver;
+  const isAdmin = () => !state.me || state.me.role === 'admin';
+  function applyRoleUi() {
+    document.documentElement.classList.toggle('ro', !canEdit());
+    document.documentElement.classList.toggle('no-approve', !canApprove());
+    const b = $('#roleBadge');
+    if (b) { b.hidden = !state.me; if (state.me) { b.textContent = canEdit() ? (state.me.approver && state.me.role !== 'admin' ? '✓ Người duyệt' : ROLE_LABEL[state.me.role]) : (state.me.approver ? '👁 Xem + duyệt' : '👁 Chỉ xem'); b.className = 'role-badge ' + state.me.role; b.title = `${state.me.name || ''} · ${ROLE_LABEL[state.me.role]}${state.me.approver ? ' · Người duyệt yêu cầu' : ''}`; } }
+  }
+  function setMe(me) {
+    const before = JSON.stringify(state.me || null);
+    state.me = me; LS.set('me', me);
+    if (me && me.name && !me.master) { state.user = me.name; LS.set('user', me.name); }
+    applyRoleUi();
+    if (before !== JSON.stringify(me) && state.data) { buildNav(); rerender(); }
   }
 
   function setSync(kind, text) {
@@ -366,7 +391,7 @@
       } catch (e) {
         if (e.auth) break;
         if (e.net || e instanceof TypeError) { state.online = false; break; }
-        toast('Không ghi được: ' + e.message, 'err');
+        toast((e.perm ? 'Không có quyền: ' : 'Không ghi được: ') + e.message, 'err');
         state.queue.shift(); saveQueue(); changed = true;
       }
     }
@@ -471,12 +496,14 @@
         const sc = schemaOf(n);
         let extra = '';
         if (sc.type === 'task' && state.data) { const c = taskCounts(state.kho === 'ALL' ? null : state.kho); const m = c.overdue + c.today; if (m) extra = `<span class="cnt" title="Quá hạn + đến hạn hôm nay">${m}</span>`; }
+        if (sc.type === 'dv' && state.data) { const c = dvCounts(state.kho === 'ALL' ? null : state.kho); const m = c.late + c.wait; if (m) extra = `<span class="cnt" title="Quá hạn timeline + chờ duyệt">${m}</span>`; }
         h += a('#/sheet/' + encodeURIComponent(n), icon(sc.icon), sc.title, extra);
       });
     });
     h += '<div class="nav-sec">Hệ thống</div>';
     h += a('#/hinh-anh', icon('image'), 'Thư viện hình ảnh', state.images.length ? `<span class="cnt" style="background:#2b6f68">${state.images.length}</span>` : '');
     h += a('#/nhat-ky', icon('history'), 'Nhật ký thay đổi');
+    h += a('#/phan-quyen', icon('lock'), 'Phân quyền truy cập');
     h += a('#/cai-dat', icon('gear'), 'Cài đặt & Sao lưu');
     $('#nav').innerHTML = h;
   }
@@ -504,12 +531,13 @@
     const view = $('#view');
     if (!state.data) { view.innerHTML = '<div class="empty">Đang tải…</div>'; return; }
     let m;
-    if ((m = /^#\/kho\/(.+)$/.exec(h))) { renderKho(view, m[1]); pdaAlert(view, m[1]); taskAlert(view, m[1]); }
+    if ((m = /^#\/kho\/(.+)$/.exec(h))) { renderKho(view, m[1]); pdaAlert(view, m[1]); dvAlert(view, m[1]); taskAlert(view, m[1]); }
     else if ((m = /^#\/sheet\/(.+)$/.exec(h))) renderSheet(view, m[1]);
     else if (h === '#/hinh-anh') renderGallery(view);
     else if (h === '#/nhat-ky') renderLog(view);
     else if (h === '#/cai-dat') renderSettings(view);
-    else { const k = state.kho === 'ALL' ? null : state.kho; renderOverview(view); pdaAlert(view, k); taskAlert(view, k); }
+    else if (h === '#/phan-quyen') renderPerm(view);
+    else { const k = state.kho === 'ALL' ? null : state.kho; renderOverview(view); pdaAlert(view, k); dvAlert(view, k); taskAlert(view, k); }
     if (keepScroll) window.scrollTo(0, y); else window.scrollTo(0, 0);
   }
 
@@ -814,6 +842,7 @@
     const desc = String(val(name, 2, 1) || '');
     if (sc.type === 'doc') return renderDoc(view, name);
     if (sc.type === 'task') return renderTasks(view);
+    if (sc.type === 'dv') return renderDV(view);
     if (sc.type === 'report') {
       view.innerHTML = `<div class="card"><div class="card-h"><h3>${esc(val(name, 1, 1))}</h3><span class="sub">${esc(desc)}</span></div>${reportTable(name, sc.headerRow)}</div>`;
       return;
@@ -831,9 +860,9 @@
           <div class="search"><input class="input" id="q" placeholder="Tìm trong bảng… (phím /)" value="${esc(vs.q)}"></div>
           ${def.type !== 'calendar' ? filterSelects(def, vs) : ''}
           <div class="right">
-            ${def.addRow ? `<button class="btn primary" id="addRow">＋ Thêm dòng</button>` : ''}
-            ${name === 'DM_NVL' || name === 'DM_CCDC' ? `<button class="btn" id="catMgr" title="Đánh dấu mã đang dùng / ngừng dùng">⚙ Đang dùng / Ngừng dùng</button>` : ''}
-            ${def.addCol ? `<button class="btn" id="addCol" title="Bổ sung hạng mục (cột mới) vào bảng">＋ Hạng mục</button>` : ''}
+            ${def.addRow ? `<button class="btn primary need-edit" id="addRow">＋ Thêm dòng</button>` : ''}
+            ${name === 'DM_NVL' || name === 'DM_CCDC' ? `<button class="btn need-edit" id="catMgr" title="Đánh dấu mã đang dùng / ngừng dùng">⚙ Đang dùng / Ngừng dùng</button>` : ''}
+            ${def.addCol ? `<button class="btn need-edit" id="addCol" title="Bổ sung hạng mục (cột mới) vào bảng">＋ Hạng mục</button>` : ''}
             <button class="btn" id="csv" title="Xuất bảng đang xem ra Excel (CSV)">⭳ Xuất Excel</button>
             <button class="btn" id="print" title="In / lưu PDF">⎙ In</button>
           </div>
@@ -960,7 +989,7 @@
         body += `<td class="${klass}" data-c="${col.c}">${cc ? `<span class="chip ${cc}">${esc(f)}</span>` : esc(f)}</td>`;
       });
       const nImg = state.images.filter(im => im.sheet === def.name && +im.row === r).length;
-      body += `<td class="rowact"><button class="ra ${nImg ? 'has' : ''}" data-act="img" title="Hình ảnh">📷${nImg ? ' ' + nImg : ''}</button><button class="ra" data-act="open" title="Xem / sửa chi tiết">✎</button>${def.addRow ? '<button class="ra" data-act="del" title="Xóa dòng (giữ công thức)">🗑</button>' : ''}</td></tr>`;
+      body += `<td class="rowact"><button class="ra ${nImg ? 'has' : ''}" data-act="img" title="Hình ảnh">📷${nImg ? ' ' + nImg : ''}</button><button class="ra" data-act="open" title="Xem / sửa chi tiết">✎</button>${def.addRow ? '<button class="ra need-edit" data-act="del" title="Xóa dòng (giữ công thức)">🗑</button>' : ''}</td></tr>`;
     });
     if (!slice.length) body = `<tr><td colspan="${cols.length + 2}"><div class="empty">${tableRows(def).length ? 'Không có dòng phù hợp bộ lọc.' : 'Chưa có dữ liệu.' + (def.addRow ? ' Bấm “＋ Thêm dòng” để nhập.' : '')}</div></td></tr>`;
     // Tổng tiền (Thành tiền / Giá trị tồn) của các dòng đang lọc
@@ -1174,7 +1203,18 @@
       <dt>Theo dõi</dt><dd>Chỉ số trong ngày: lượt cấp, đang mượn, quá hạn trả (mượn từ hôm trước chưa trả), trả về có lỗi, máy sẵn sàng. Máy quá hạn trả được cảnh báo ở Tổng quan và trang từng kho.</dd></dl>
       <h2>Dành cho Quản lý: Task</h2><dl>
       <dt>Tạo task</dt><dd>Bắt buộc có tiêu đề, người phụ trách và hạn chót. Có thể chia thành checklist các bước nhỏ. Task quá hạn luôn đứng đầu danh sách, số task quá hạn hiện trên menu.</dd>
-      <dt>Thói quen</dt><dd>Đầu ngày xem tab “Quá hạn” và “Hôm nay”. Cuối tuần nhóm theo người phụ trách và rà mục “Dễ bị sót”.</dd></dl>`;
+      <dt>Thói quen</dt><dd>Đầu ngày xem tab “Quá hạn” và “Hôm nay”. Cuối tuần nhóm theo người phụ trách và rà mục “Dễ bị sót”.</dd></dl>
+      <h2>Dành cho Quản lý: Dịch vụ mua ngoài</h2><dl>
+      <dt>Dùng khi nào</dt><dd>Mua CCDC không có trong hệ thống kho, hoặc thuê dịch vụ nhà cung cấp: vệ sinh máy lạnh, xịt côn trùng, sửa chữa nhà vệ sinh…</dd>
+      <dt>Thông tin</dt><dd>Mỗi yêu cầu chia 6 phần theo thứ tự: ① Thông tin yêu cầu (nội dung, loại, mức độ, kho, bộ phận yêu cầu) · ② Người thực hiện &amp; tiến độ · ③ Timeline dự kiến · ④ Nhà cung cấp &amp; chi phí · ⑤ Phê duyệt (người duyệt yêu cầu, kết quả duyệt) · ⑥ Giải trình. Bắt buộc: nội dung, bộ phận yêu cầu, người thực hiện, ngày hoàn thành dự kiến; từ bước “Chờ duyệt” trở đi phải có người duyệt.</dd>
+      <dt>Ai làm gì</dt><dd><b>Người thực hiện</b> đi báo giá, bấm “Gửi duyệt”, sau khi được duyệt thì “Bắt đầu thực hiện”, “Bàn giao – chờ nghiệm thu”, “Nghiệm thu – Hoàn thành”. <b>Người duyệt yêu cầu</b> xem nội dung, chi phí rồi bấm “Duyệt” hoặc “Từ chối” (từ chối phải ghi lý do ở Giải trình). Chỉ tài khoản có quyền Người duyệt yêu cầu mới thấy nút Duyệt / Từ chối.</dd>
+      <dt>Tiến độ</dt><dd>Đang báo giá → Chờ duyệt → Đã duyệt → Đang thực hiện → Chờ nghiệm thu → Hoàn thành (hoặc dừng ở Từ chối / Hủy). Trong chi tiết yêu cầu có nút chuyển sang bước kế tiếp: Duyệt / Từ chối tự ghi ngày duyệt; Nghiệm thu tự ghi ngày hoàn thành thực tế.</dd>
+      <dt>Giải trình</dt><dd>Bắt buộc khi yêu cầu quá hạn timeline, hoàn thành trễ, chi phí thực tế vượt dự kiến, bị từ chối hoặc hủy. Tab “Thiếu giải trình” liệt kê các yêu cầu còn thiếu.</dd>
+      <dt>Theo dõi</dt><dd>Chỉ số: đang xử lý (kèm tổng giá trị), chờ duyệt, quá hạn, thiếu giải trình, hoàn thành trong tháng (tỷ lệ đúng hạn, chi phí). Có thể nhóm theo tiến độ, kho, bộ phận, người thực hiện, người duyệt; đính kèm ảnh báo giá / hiện trường / nghiệm thu.</dd></dl>
+      <h2>Hệ thống: Phân quyền truy cập</h2><dl>
+      <dt>Mã truy cập riêng</dt><dd>Mỗi người đăng nhập bằng mã truy cập cá nhân do Quản trị cấp (menu Hệ thống → Phân quyền truy cập). Tên người dùng tự lấy theo tài khoản và ghi vào Nhật ký thay đổi. Mã chung (đặt bằng hàm setPasscode) chỉ nên để Quản trị giữ.</dd>
+      <dt>Vai trò</dt><dd><b>Người xem</b>: xem, tải Excel, không sửa được gì · <b>Người chỉnh sửa</b>: thêm / sửa / xóa dữ liệu · <b>Quản trị</b>: toàn quyền và cấp quyền cho người khác. Quyền cộng thêm <b>Người duyệt yêu cầu</b>: được Duyệt / Từ chối Dịch vụ mua ngoài và duyệt hoàn thành Task “Chờ duyệt” (gắn được cho cả Người xem).</dd>
+      <dt>Kiểm soát</dt><dd>Quyền được Apps Script kiểm tra trên máy chủ, nên không thể vượt quyền bằng cách sửa giao diện. Khóa (🔒) tài khoản để tạm ngưng; xóa nếu người đó nghỉ hẳn.</dd></dl>`;
     view.innerHTML = h + '</div></div>';
   }
 
@@ -1223,10 +1263,10 @@
     }).join('');
     const imgs = isNew ? '' : `<div class="sec-title" id="imgSec">📷 Hình ảnh theo dõi <span class="chip" id="imgCount"></span></div>
       <div class="gallery" id="imgGrid"></div>
-      <label class="upload mt" id="upl"><input type="file" accept="image/*" multiple id="imgInput"><b>Bấm để chọn ảnh</b> hoặc kéo thả vào đây<br><small>Trên điện thoại có thể chụp trực tiếp · ảnh tự nén ≤ 1600px</small></label>`;
+      <label class="upload mt need-edit" id="upl"><input type="file" accept="image/*" multiple id="imgInput"><b>Bấm để chọn ảnh</b> hoặc kéo thả vào đây<br><small>Trên điện thoại có thể chụp trực tiếp · ảnh tự nén ≤ 1600px</small></label>`;
     const title = isNew ? `Thêm dòng – ${schemaOf(name).title}` : `${schemaOf(name).title} · dòng ${r}`;
     openDrawer(title, `${!isNew ? `<div class="muted" style="margin-bottom:12px">${esc(rowLabel(def, r))}</div>` : ''}<div class="form">${fields}</div>${imgs}`,
-      `${!isNew && def.addRow ? '<button class="btn danger" id="dDel">🗑 Xóa dòng</button>' : ''}<span style="flex:1"></span><button class="btn" data-close>Đóng</button><button class="btn primary" id="dSave">${isNew ? '＋ Thêm vào Sheet' : '💾 Lưu thay đổi'}</button>`);
+      `${!isNew && def.addRow ? '<button class="btn danger need-edit" id="dDel">🗑 Xóa dòng</button>' : ''}<span style="flex:1"></span><button class="btn" data-close>Đóng</button><button class="btn primary need-edit" id="dSave">${isNew ? '＋ Thêm vào Sheet' : '💾 Lưu thay đổi'}</button>`);
     const body = $('#drawerBody');
     // Tự điền tên/ĐVT khi chọn mã; tự sinh mã danh mục
     if (def.autoCode && isNew) {
@@ -1257,7 +1297,7 @@
       if (priceEl) priceEl.addEventListener('input', () => { priceEl.dataset.auto = ''; });
       el.addEventListener('input', () => upd(false)); upd(true);
       if (kind === 'NVL' || kind === 'CCDC') {
-        const tools = document.createElement('div'); tools.className = 'lk-tools';
+        const tools = document.createElement('div'); tools.className = 'lk-tools need-edit';
         tools.innerHTML = `<button type="button" class="btn sm" data-lk="new">＋ Mã ${kind} mới</button><button type="button" class="btn sm" data-lk="cat">⚙ Danh mục ${kind}</button>`;
         hint.after(tools);
         tools.querySelector('[data-lk=new]').onclick = () => openNewCodeModal(kind, code => { el.value = code; upd(); });
@@ -1292,7 +1332,7 @@
   function drawImages(name, r) {
     const list = state.images.filter(im => im.sheet === name && +im.row === r);
     $('#imgCount').textContent = list.length;
-    $('#imgGrid').innerHTML = list.map(im => `<div class="ph" data-url="${esc(im.url)}" data-cap="${esc(im.name + ' · ' + im.time)}"><img loading="lazy" src="${esc(im.url)}" alt="${esc(im.name)}" referrerpolicy="no-referrer"><button class="del" data-id="${esc(im.id)}" title="Xóa ảnh">✕</button><div class="cap">${esc(im.time)}</div></div>`).join('') || '<div class="muted">Chưa có ảnh.</div>';
+    $('#imgGrid').innerHTML = list.map(im => `<div class="ph" data-url="${esc(im.url)}" data-cap="${esc(im.name + ' · ' + im.time)}"><img loading="lazy" src="${esc(im.url)}" alt="${esc(im.name)}" referrerpolicy="no-referrer"><button class="del need-edit" data-id="${esc(im.id)}" title="Xóa ảnh">✕</button><div class="cap">${esc(im.time)}</div></div>`).join('') || '<div class="muted">Chưa có ảnh.</div>';
     $$('#imgGrid .ph').forEach(ph => ph.addEventListener('click', e => {
       if (e.target.closest('.del')) return;
       lightbox(ph.dataset.url, ph.dataset.cap);
@@ -1393,7 +1433,7 @@
       <div class="grid g2 mt">
         <div class="card"><div class="card-h"><h3>Sao lưu</h3></div><div class="card-b">
           <p class="muted" style="margin-top:0">• Sao lưu tự động: bản sao cả file vào Google Drive (thư mục “GHN Kho Vat Tu - Sao luu”) lúc 23:00 hằng ngày, giữ 30 bản – bật bằng hàm <span class="code-inline">setupTriggers</span>.<br>• Mọi thay đổi từ web ghi vào tab WEB_NHAT_KY.<br>• Trên máy này: thay đổi chưa gửi được giữ lại và tự gửi khi có mạng.</p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="bNow" ${state.apiUrl ? '' : 'disabled'}>☁ Sao lưu ngay lên Drive</button><button class="btn" id="bJson">⭳ Tải bản sao lưu (.json)</button><a class="btn" href="https://docs.google.com/spreadsheets/d/${C.SHEET_ID}/export?format=xlsx" target="_blank" rel="noopener">⭳ Tải file Excel (.xlsx)</a></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary need-edit" id="bNow" ${state.apiUrl ? '' : 'disabled'}>☁ Sao lưu ngay lên Drive</button><button class="btn" id="bJson">⭳ Tải bản sao lưu (.json)</button><a class="btn" href="https://docs.google.com/spreadsheets/d/${C.SHEET_ID}/export?format=xlsx" target="_blank" rel="noopener">⭳ Tải file Excel (.xlsx)</a></div>
           <div id="bList" class="mt"></div>
         </div></div>
         <div class="card"><div class="card-h"><h3>Dữ liệu</h3></div><div class="card-b">
@@ -1430,7 +1470,7 @@
     const list = ft.list.map(String);
     return '<option value=""></option>' + list.map(o => `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')
       + (cur && !list.includes(cur) ? `<option selected>${esc(cur)}</option>` : '')
-      + (ft.manage ? `<option disabled>──────────</option><option value="${OPT_ADD}">＋ Thêm lựa chọn mới…</option><option value="${OPT_MANAGE}">⚙ Sửa / xóa danh sách…</option>` : '');
+      + (ft.manage && canEdit() ? `<option disabled>──────────</option><option value="${OPT_ADD}">＋ Thêm lựa chọn mới…</option><option value="${OPT_MANAGE}">⚙ Sửa / xóa danh sách…</option>` : '');
   }
   const currentList = (def, col) => (dvFor(def.name, col.L, def.dataStart, def.dataStart) || []).map(String);
   function saveList(def, col, values) {
@@ -1652,12 +1692,12 @@
       </div>
       <div class="card mt">
         <div class="card-h"><div><h3>Máy đang được mượn${k ? ' · ' + esc(k) : ''}</h3><div class="sub" style="margin-top:3px">Quá hạn đứng đầu · bấm “Trả máy” khi nhận lại</div></div>
-          <div class="right"><button class="btn primary" id="pdaOut">＋ Cấp máy</button></div></div>
+          <div class="right"><button class="btn primary need-edit" id="pdaOut">＋ Cấp máy</button></div></div>
         ${open.length ? `<ul class="list">${open.map(x => `<li class="${x.late ? 'is-late' : ''}">
             <div class="grow"><div class="t">${esc(x.imei || '(chưa ghi IMEI)')}${x.name ? ` · <span class="muted">${esc(x.name)}</span>` : ''}${dupes[imeiKey(x.imei)] > 1 ? ' <span class="chip red">IMEI đang mượn trùng</span>' : ''}</div>
               <div class="s">👤 ${esc(x.who || '—')}${x.msnv ? ' (' + esc(x.msnv) + ')' : ''} · ${esc(x.kho)} · ${esc(x.ca)} · ${x.d ? dmy(isoOf(x.d)) : ''} ${esc(x.out)}${x.dept ? ' · ' + esc(x.dept) : ''}</div></div>
             <span class="chip ${x.late ? 'red' : 'amber'}">${x.late ? `Quá hạn ${x.lateDays} ngày` : 'Đang mượn'}</span>
-            <button class="btn sm" data-ret="${x.r}">↩ Trả máy</button></li>`).join('')}</ul>`
+            <button class="btn sm need-edit" data-ret="${x.r}">↩ Trả máy</button></li>`).join('')}</ul>`
           : '<div class="empty">Không có máy nào đang được mượn. 👍</div>'}
       </div>`;
     view.prepend(wrap);
@@ -1847,7 +1887,7 @@
       </div>
       <div class="card mt">
         <div class="card-h"><div><h3>Danh sách task</h3><div class="sub" style="margin-top:3px">Quá hạn luôn ở trên cùng · bấm vào task để xem chi tiết, checklist và ảnh${s && s.local ? ' · <b>Sheet chưa có tab QL_TASK – sẽ tự tạo khi thêm task đầu tiên</b>' : ''}</div></div>
-          <div class="right">${k ? `<span class="chip brand">Đang lọc kho: ${esc(k)} + Chung</span>` : ''}<button class="btn primary" id="tNew">＋ Task mới</button></div></div>
+          <div class="right">${k ? `<span class="chip brand">Đang lọc kho: ${esc(k)} + Chung</span>` : ''}<button class="btn primary need-edit" id="tNew">＋ Task mới</button></div></div>
         <div class="toolbar">
           <div class="tabs">${tabs.filter(t => t[0] !== 'mine' || meKey()).map(t => `<button class="tab ${vs.tab === t[0] ? 'active' : ''}" data-tab="${t[0]}">${t[1]}${t[2] ? ` <span class="tcount">${t[2]}</span>` : ''}</button>`).join('')}</div>
         </div>
@@ -1915,7 +1955,7 @@
     const prioCls = t.prio === 'Gấp' ? 'red' : t.prio === 'Cao' ? 'amber' : '';
     const imgs = state.images.filter(im => im.sheet === TASK && +im.row === t.r).length;
     return `<li class="task-item ${b === 'overdue' ? 'is-late' : ''} ${t.done ? 'is-done' : ''}" data-r="${t.r}">
-      <button class="tcheck ${t.done ? 'on' : ''}" data-done="${t.r}" title="${t.done ? 'Mở lại task' : 'Đánh dấu hoàn thành'}" aria-label="${t.done ? 'Mở lại task' : 'Đánh dấu hoàn thành'}">${t.done ? '✓' : ''}</button>
+      <button class="tcheck need-edit ${t.done ? 'on' : ''}" data-done="${t.r}" title="${t.done ? 'Mở lại task' : 'Đánh dấu hoàn thành'}" aria-label="${t.done ? 'Mở lại task' : 'Đánh dấu hoàn thành'}">${t.done ? '✓' : ''}</button>
       <div class="grow">
         <div class="t">${t.id ? `<span class="muted">${esc(t.id)}</span> ` : ''}${esc(t.title)}</div>
         <div class="tmeta">
@@ -1934,6 +1974,7 @@
     $$('#tBody .task-item').forEach(li => li.addEventListener('click', e => { if (e.target.closest('[data-done]')) return; openTaskDrawer(+li.dataset.r); }));
     $$('#tBody [data-done]').forEach(b => b.onclick = () => {
       const t = taskList().find(x => x.r === +b.dataset.done); if (!t) return;
+      if (!t.done && t.status === 'Chờ duyệt' && !canApprove()) { toast('Task đang Chờ duyệt – chỉ Người duyệt yêu cầu mới duyệt hoàn thành được', 'warn'); return; }
       if (!t.done) {
         const left = t.items.filter(i => !i.done).length;
         if (left && !confirm(`Checklist còn ${left} bước chưa xong. Vẫn đánh dấu hoàn thành?`)) return;
@@ -2005,9 +2046,9 @@
       <div class="form mt"><div class="field full"><label for="tNote">Kết quả / ghi chú</label><textarea id="tNote" placeholder="Kết quả, vướng mắc, link tài liệu…">${esc(v.note)}</textarea></div></div>
       ${t ? `<div class="sec-title" id="imgSec">📷 Hình ảnh / bằng chứng <span class="chip" id="imgCount"></span></div>
         <div class="gallery" id="imgGrid"></div>
-        <label class="upload mt" id="upl"><input type="file" accept="image/*" multiple id="imgInput"><b>Bấm để chọn ảnh</b> hoặc kéo thả vào đây<br><small>Trên điện thoại có thể chụp trực tiếp · ảnh tự nén ≤ 1600px</small></label>` : ''}`;
+        <label class="upload mt need-edit" id="upl"><input type="file" accept="image/*" multiple id="imgInput"><b>Bấm để chọn ảnh</b> hoặc kéo thả vào đây<br><small>Trên điện thoại có thể chụp trực tiếp · ảnh tự nén ≤ 1600px</small></label>` : ''}`;
     openDrawer(isNew ? 'Task mới' : 'Chi tiết task', body,
-      `${t ? '<button class="btn danger" id="tDel">🗑 Xóa task</button>' : ''}<span style="flex:1"></span><button class="btn" data-close>Đóng</button><button class="btn primary" id="tSave">${isNew ? '＋ Tạo task' : '💾 Lưu'}</button>`);
+      `${t ? '<button class="btn danger need-edit" id="tDel">🗑 Xóa task</button>' : ''}<span style="flex:1"></span>${t && t.status === 'Chờ duyệt' && canApprove() ? '<button class="btn primary" id="tApprove">✓ Duyệt hoàn thành</button>' : ''}<button class="btn" data-close>Đóng</button><button class="btn primary need-edit" id="tSave">${isNew ? '＋ Tạo task' : '💾 Lưu'}</button>`);
 
     const drawCk = () => {
       const n = items.length, nd = items.filter(i => i.done).length;
@@ -2046,6 +2087,7 @@
         $('#' + miss[0][0]).focus();
         return;
       }
+      if (t && t.status === 'Chờ duyệt' && f[TK.status] === 'Hoàn thành' && !canApprove()) { toast('Task đang Chờ duyệt – chỉ Người duyệt yêu cầu mới duyệt hoàn thành được', 'warn'); return; }
       const wasDone = t && t.done, nowDone = T_DONE.includes(f[TK.status]);
       if (nowDone && !wasDone) {
         const left = items.filter(i => !i.done && i.text.trim()).length;
@@ -2056,6 +2098,11 @@
       else { saveTask(t.r, f); toast('Đã lưu task'); }
       closeDrawer(); route(true);
     };
+    // Người duyệt (kể cả vai trò Người xem): duyệt hoàn thành task đang Chờ duyệt – chỉ ghi Trạng thái + Ngày hoàn thành
+    if ($('#tApprove')) $('#tApprove').onclick = () => {
+      saveTask(t.r, { [TK.status]: 'Hoàn thành', [TK.doneAt]: isoOf(new Date()) });
+      toast('✓ Đã duyệt hoàn thành: ' + t.title); closeDrawer(); route(true);
+    };
     if ($('#tDel')) $('#tDel').onclick = () => {
       if (!confirm(`Xóa task “${t.title}”?\nDòng ${t.r} trên tab QL_TASK sẽ được xóa nội dung.`)) return;
       enqueue('clearRow', { sheet: TASK, row: t.r, lastCol: T_HEAD.length });
@@ -2063,6 +2110,485 @@
     };
     if (t) { drawImages(TASK, t.r); bindUpload(tableDef(TASK), t.r); }
     setTimeout(() => $('#tTitle').focus(), 250);
+  }
+
+  /* ------------------------------------------------------------------ DỊCH VỤ MUA NGOÀI – Dành cho Quản lý
+   * Tab DV_MUA_NGOAI. Quy trình: Đang báo giá → Chờ duyệt → Đã duyệt → Đang thực hiện → Chờ nghiệm thu → Hoàn thành
+   * (nhánh dừng: Từ chối / Hủy). Giải trình bắt buộc khi quá hạn / trễ, vượt chi phí, từ chối hoặc hủy. */
+  const DVS = 'DV_MUA_NGOAI';
+  const DV = { id: 1, date: 2, kho: 3, type: 4, level: 5, title: 6, detail: 7, dept: 8, req: 9, handler: 10, approver: 11,
+    stage: 12, apprAt: 13, start: 14, due: 15, doneAt: 16, vendor: 17, est: 18, cost: 19, explain: 20, docs: 21, dueState: 22, upd: 23 };
+  const DV_NCOL = 23;
+  const DV_FLOW = ['Đang báo giá', 'Chờ duyệt', 'Đã duyệt', 'Đang thực hiện', 'Chờ nghiệm thu', 'Hoàn thành'];
+  const DV_STOP = ['Từ chối', 'Hủy'];
+  const DV_STAGES = [...DV_FLOW, ...DV_STOP];
+  const DV_TYPES = ['Dịch vụ', 'CCDC ngoài hệ thống', 'Sửa chữa', 'Khác'];
+  const DV_LEVELS = ['Khẩn cấp', 'Cao', 'Bình thường'];
+  const dvStageCls = s => s === 'Hoàn thành' ? 'green' : DV_STOP.includes(s) ? '' : s === 'Chờ duyệt' ? 'amber' : s === 'Đang báo giá' ? 'blue' : 'brand';
+  const money = n => n ? Math.round(n).toLocaleString('vi-VN') + ' đ' : '—';
+
+  function dvList() {
+    const s = sh(DVS); if (!s) return [];
+    const out = [];
+    for (let r = 5; r <= s.v.length; r++) {
+      const g = c => plain(val(DVS, r, c)), d = c => toDate(val(DVS, r, c), true);
+      const title = g(DV.title).trim(); if (!title && !g(DV.id)) continue;
+      const stage = g(DV.stage) || 'Đang báo giá';
+      const x = { r, id: g(DV.id), date: d(DV.date), kho: g(DV.kho) || 'Chung', type: g(DV.type), level: g(DV.level) || 'Bình thường', title: title || '(chưa có nội dung)',
+        detail: g(DV.detail), dept: g(DV.dept), req: g(DV.req), handler: g(DV.handler), approver: g(DV.approver), stage, apprAt: d(DV.apprAt),
+        start: d(DV.start), due: d(DV.due), doneAt: d(DV.doneAt), vendor: g(DV.vendor), est: num(val(DVS, r, DV.est) || 0), cost: num(val(DVS, r, DV.cost) || 0),
+        explain: g(DV.explain), docs: g(DV.docs), upd: g(DV.upd) };
+      x.closed = stage === 'Hoàn thành' || DV_STOP.includes(stage);
+      const t0 = today0();
+      x.left = x.due ? Math.round((x.due - t0) / 86400000) : null;
+      x.late = !x.closed && x.due && x.left < 0;
+      x.lateDone = stage === 'Hoàn thành' && x.due && x.doneAt && x.doneAt > x.due ? Math.round((x.doneAt - x.due) / 86400000) : 0;
+      x.over = x.est > 0 && x.cost > x.est;
+      x.needExplain = (x.late || x.lateDone || x.over || DV_STOP.includes(stage)) && !x.explain.trim();
+      out.push(x);
+    }
+    return out;
+  }
+  function dvCounts(k) {
+    const t0 = today0(), m0 = new Date(t0.getFullYear(), t0.getMonth(), 1);
+    const L = dvList().filter(x => !k || x.kho === k || x.kho === 'Chung');
+    const doneM = L.filter(x => x.stage === 'Hoàn thành' && x.doneAt && x.doneAt >= m0);
+    return {
+      open: L.filter(x => !x.closed).length, wait: L.filter(x => x.stage === 'Chờ duyệt').length, late: L.filter(x => x.late).length,
+      soon: L.filter(x => !x.closed && x.left !== null && x.left >= 0 && x.left <= 3).length, explain: L.filter(x => x.needExplain).length,
+      doneM: doneM.length, onTime: doneM.filter(x => !x.lateDone).length, costM: doneM.reduce((a, x) => a + (x.cost || x.est), 0),
+      pipeline: L.filter(x => !x.closed).reduce((a, x) => a + (x.cost || x.est), 0)
+    };
+  }
+  function dvAlert(view, k) {
+    if (!sh(DVS)) return;
+    const c = dvCounts(k);
+    if (!c.late && !c.wait) return;
+    const parts = [];
+    if (c.late) parts.push(`<b>${c.late}</b> quá hạn timeline`);
+    if (c.wait) parts.push(`<b>${c.wait}</b> chờ duyệt`);
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `<div class="task-alert ${c.late ? 'red' : ''}" data-go="${esc(k ? `kho:|${k}|#/sheet/${DVS}` : '#/sheet/' + DVS)}" role="link" tabindex="0">${icon('service')}<span>Dịch vụ mua ngoài${k ? ' · ' + esc(k) : ''}: ${parts.join(' · ')}</span><span class="go">Xem →</span></div>`;
+    view.prepend(wrap); bindGo(wrap);
+  }
+
+  const dvvs = () => state.views.__dv || (state.views.__dv = { q: '', tab: 'open', group: 'stage' });
+
+  function renderDV(view) {
+    setCrumb('Dịch vụ mua ngoài', 'Dành cho Quản lý');
+    const vs = dvvs(), k = state.kho === 'ALL' ? null : state.kho, c = dvCounts(k);
+    const all = dvList().filter(x => !k || x.kho === k || x.kho === 'Chung');
+    const s = sh(DVS);
+    const tabs = [['open', 'Đang xử lý', c.open], ['wait', 'Chờ duyệt', c.wait], ['late', 'Quá hạn', c.late], ['explain', 'Thiếu giải trình', c.explain], ['done', 'Hoàn thành', null], ['stop', 'Từ chối / Hủy', null], ['all', 'Tất cả', null]];
+    view.innerHTML = `
+      <div class="kpis">
+        ${kpi('Đang xử lý', c.open, `Giá trị: ${money(c.pipeline)}`, 'blue')}
+        ${kpi('Chờ duyệt', c.wait, 'Cần người duyệt xử lý', c.wait ? 'amber' : 'green')}
+        ${kpi('Quá hạn timeline', c.late, `${c.soon} yêu cầu đến hạn trong 3 ngày`, c.late ? 'red' : 'green')}
+        ${kpi('Thiếu giải trình', c.explain, 'Trễ hạn / vượt chi phí / từ chối / hủy', c.explain ? 'red' : 'green')}
+        ${kpi('Hoàn thành tháng này', c.doneM, c.doneM ? `${Math.round(c.onTime / c.doneM * 100)}% đúng hạn · ${money(c.costM)}` : 'Chưa có', 'green')}
+      </div>
+      <div class="card mt">
+        <div class="card-h"><div><h3>Yêu cầu dịch vụ / mua ngoài</h3><div class="sub" style="margin-top:3px">Mua CCDC ngoài hệ thống kho, dịch vụ nhà cung cấp (vệ sinh máy lạnh, xịt côn trùng, sửa chữa…). Bấm vào yêu cầu để xem chi tiết, duyệt và cập nhật tiến độ.${s && s.local ? ' · <b class="warn-text">Tab chưa có trên Google Sheet – tự tạo khi có yêu cầu đầu tiên.</b>' : ''}</div></div>
+          <div class="right">${k ? `<span class="chip brand">Đang lọc kho: ${esc(k)} + Chung</span>` : ''}<button class="btn primary need-edit" id="dvNew">＋ Yêu cầu mới</button></div></div>
+        <div class="toolbar"><div class="tabs">${tabs.map(t => `<button class="tab ${vs.tab === t[0] ? 'active' : ''}" data-tab="${t[0]}">${t[1]}${t[2] ? ` <span class="tcount">${t[2]}</span>` : ''}</button>`).join('')}</div></div>
+        <div class="toolbar">
+          <div class="search"><input class="input" id="dvq" placeholder="Tìm nội dung, bộ phận, người thực hiện, người duyệt, nhà cung cấp…" value="${esc(vs.q)}"></div>
+          <div class="right"><label class="muted" for="dvGroup" style="font-size:12.5px">Nhóm theo</label>
+            <select class="select" id="dvGroup">${[['stage', 'Tiến độ'], ['kho', 'Kho'], ['dept', 'Bộ phận yêu cầu'], ['handler', 'Người thực hiện'], ['approver', 'Người duyệt'], ['type', 'Loại yêu cầu']].map(o => `<option value="${o[0]}" ${vs.group === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
+            <button class="btn" id="dvCsv">⭳ Xuất Excel</button></div>
+        </div>
+        <div id="dvBody"></div>
+      </div>`;
+    const draw = () => { $('#dvBody').innerHTML = dvGroupsHtml(dvFilter(all, vs), vs.group); $$('#dvBody [data-r]').forEach(li => li.onclick = () => openDVDrawer(+li.dataset.r)); };
+    draw();
+    $$('[data-tab]', view).forEach(b => b.onclick = () => { vs.tab = b.dataset.tab; renderDV(view); });
+    $('#dvq').addEventListener('input', debounce(e => { vs.q = e.target.value; draw(); }, 200));
+    $('#dvGroup').onchange = e => { vs.group = e.target.value; draw(); };
+    $('#dvNew').onclick = () => openDVDrawer(null);
+    $('#dvCsv').onclick = () => exportCSV(tableDef(DVS));
+  }
+
+  function dvFilter(list, vs) {
+    const q = vs.q.trim().toLowerCase();
+    return list.filter(x => {
+      if (vs.tab === 'open' && x.closed) return false;
+      if (vs.tab === 'wait' && x.stage !== 'Chờ duyệt') return false;
+      if (vs.tab === 'late' && !x.late) return false;
+      if (vs.tab === 'explain' && !x.needExplain) return false;
+      if (vs.tab === 'done' && x.stage !== 'Hoàn thành') return false;
+      if (vs.tab === 'stop' && !DV_STOP.includes(x.stage)) return false;
+      if (q && ![x.id, x.title, x.detail, x.dept, x.req, x.handler, x.approver, x.vendor, x.explain, x.docs].join(' ').toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+
+  function dvGroupsHtml(list, group) {
+    if (!list.length) return '<div class="empty">Không có yêu cầu nào trong mục này.</div>';
+    const keyOf = x => group === 'stage' ? x.stage : group === 'kho' ? x.kho : group === 'dept' ? (x.dept || '⚠ Chưa ghi bộ phận') : group === 'handler' ? (x.handler || '⚠ Chưa có người thực hiện') : group === 'approver' ? (x.approver || '⚠ Chưa có người duyệt') : (x.type || 'Khác');
+    const order = group === 'stage' ? DV_STAGES : group === 'kho' ? ['Chung', ...KHO_CODES] : group === 'type' ? DV_TYPES : null;
+    const keys = [...new Set(list.map(keyOf))].sort((a, b) => order ? order.indexOf(a) - order.indexOf(b) : a.localeCompare(b, 'vi'));
+    const lv = l => DV_LEVELS.indexOf(l);
+    const sortFn = (a, b) => (b.late - a.late) || (lv(a.level) - lv(b.level)) || ((a.due ? +a.due : Infinity) - (b.due ? +b.due : Infinity)) || (a.r - b.r);
+    return keys.map(key => {
+      const items = list.filter(x => keyOf(x) === key).sort(sortFn);
+      const sum = items.reduce((a, x) => a + (x.cost || x.est), 0);
+      return `<div class="tgroup"><div class="tgroup-h"><span class="chip ${group === 'stage' ? dvStageCls(key) : key.startsWith('⚠') ? 'red' : ''}">${esc(key)}</span><span class="muted">${items.length} yêu cầu${sum ? ' · ' + money(sum) : ''}</span></div>
+        <ul class="list">${items.map(dvItemHtml).join('')}</ul></div>`;
+    }).join('');
+  }
+
+  function dvSteps(stage) {
+    if (DV_STOP.includes(stage)) return `<span class="chip">${esc(stage)}</span>`;
+    const i = DV_FLOW.indexOf(stage);
+    return `<span class="steps" title="${esc(stage)} (${i + 1}/${DV_FLOW.length})">${DV_FLOW.map((_, j) => `<i class="${j < i ? 'done' : j === i ? 'cur' : ''}"></i>`).join('')}</span>`;
+  }
+
+  function dvTimeline(x) {
+    if (x.stage === 'Hoàn thành') return x.lateDone ? `<span class="late">Xong trễ ${x.lateDone} ngày</span>` : `<span class="ok">Xong đúng hạn${x.doneAt ? ' · ' + dmy(isoOf(x.doneAt)) : ''}</span>`;
+    if (DV_STOP.includes(x.stage)) return '';
+    if (!x.due) return '<span class="chip red">Chưa có timeline</span>';
+    const range = `${x.start ? dmy(isoOf(x.start)).slice(0, 5) + ' → ' : ''}${dmy(isoOf(x.due))}`;
+    return x.late ? `<span class="late">📅 ${range} · quá hạn ${-x.left} ngày</span>` : `<span>📅 ${range} · ${x.left === 0 ? 'hôm nay' : 'còn ' + x.left + ' ngày'}</span>`;
+  }
+
+  function dvItemHtml(x) {
+    const lvCls = x.level === 'Khẩn cấp' ? 'red' : x.level === 'Cao' ? 'amber' : '';
+    const imgs = state.images.filter(im => im.sheet === DVS && +im.row === x.r).length;
+    return `<li class="task-item dv-item ${x.late ? 'is-late' : ''} ${x.closed ? 'is-closed' : ''}" data-r="${x.r}">
+      <div class="grow">
+        <div class="t">${x.id ? `<span class="muted">${esc(x.id)}</span> ` : ''}${esc(x.title)}</div>
+        <div class="tmeta">
+          <span class="chip ${dvStageCls(x.stage)}">${esc(x.stage)}</span>${dvSteps(x.stage)}
+          ${x.level !== 'Bình thường' ? `<span class="chip ${lvCls}">${esc(x.level)}</span>` : ''}
+          ${x.type ? `<span class="chip">${esc(x.type)}</span>` : ''}
+          <span class="chip">${esc(x.kho)}</span>
+          ${dvTimeline(x)}
+        </div>
+        <div class="tmeta dv-people">
+          <span title="Bộ phận yêu cầu">🏢 ${esc(x.dept || '—')}</span>
+          <span title="Người thực hiện">🛠 Thực hiện: ${x.handler ? esc(x.handler) : '<b class="late">chưa có</b>'}</span>
+          <span title="Người duyệt yêu cầu">✅ Duyệt: ${esc(x.approver || "—")}${x.apprAt && !["Đang báo giá", "Chờ duyệt"].includes(x.stage) ? " · " + dmy(isoOf(x.apprAt)) : ""}</span>
+          ${x.vendor ? `<span title="Nhà cung cấp">🏷 ${esc(x.vendor)}</span>` : ''}
+          ${imgs ? `<span>📷 ${imgs}</span>` : ''}
+          ${x.needExplain ? '<span class="chip red">Thiếu giải trình</span>' : ''}
+        </div>
+      </div>
+      <div class="dv-money">
+        <div class="v">${money(x.cost || x.est)}</div>
+        <div class="s">${x.cost ? (x.over ? `<span class="late">vượt ${money(x.cost - x.est)}</span>` : 'thực tế') : x.est ? 'dự kiến' : ''}</div>
+      </div></li>`;
+  }
+
+  function nextDVId() {
+    const y = String(new Date().getFullYear()).slice(2);
+    let max = 0;
+    dvList().forEach(x => { const m = new RegExp('^DV' + y + '-(\\d+)$').exec(x.id); if (m) max = Math.max(max, +m[1]); });
+    return `DV${y}-${String(max + 1).padStart(3, '0')}`;
+  }
+
+  /* Form chi tiết – tách rõ 2 vai trò:
+   *  ② Người thực hiện & tiến độ: người thực hiện đi báo giá, thực hiện, bàn giao nghiệm thu
+   *  ⑤ Phê duyệt: người duyệt yêu cầu xem nội dung + chi phí rồi Duyệt / Từ chối (chỉ tài khoản có quyền duyệt) */
+  function openDVDrawer(r) {
+    const x = r ? dvList().find(i => i.r === r) : null, isNew = !x;
+    const k = state.kho === 'ALL' ? 'Chung' : state.kho;
+    const iso = d => d ? isoOf(d) : '';
+    const v = x ? { ...x, date: iso(x.date), start: iso(x.start), due: iso(x.due), doneAt: iso(x.doneAt), apprAt: iso(x.apprAt) }
+      : { date: isoOf(new Date()), kho: k, type: 'Dịch vụ', level: 'Bình thường', title: '', detail: '', dept: '', req: state.user || '', handler: '', approver: '', stage: 'Đang báo giá', apprAt: '', start: '', due: '', doneAt: '', vendor: '', est: '', cost: '', explain: '', docs: '' };
+    const edit = canEdit(), appr = canApprove();
+    const ro = edit ? '' : 'disabled';
+    const names = f => [...new Set(dvList().map(i => i[f]).filter(Boolean))];
+    const approverNames = [...new Set([...(state.users || []).filter(u => u.approver && u.active).map(u => u.name), ...names('approver')])];
+    const dl = (id, list) => `<datalist id="${id}">${list.map(o => `<option value="${esc(o)}">`).join('')}</datalist>`;
+    const opt = (list, cur) => list.map(o => `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('') + (cur && !list.includes(cur) ? `<option selected>${esc(cur)}</option>` : '');
+    const inp = (id, val, extra = '') => `<input class="input" id="${id}" value="${esc(val == null ? '' : val)}" ${extra} ${ro}>`;
+    const stage = v.stage, flowIdx = DV_FLOW.indexOf(stage);
+    const stepBar = DV_STOP.includes(stage) ? `<div class="dv-stop chip ${stage === 'Từ chối' ? 'red' : ''}">${esc(stage)}</div>`
+      : `<ol class="stepper">${DV_FLOW.map((s, j) => `<li class="${j < flowIdx ? 'done' : j === flowIdx ? 'cur' : ''}"><span>${j + 1}</span>${esc(s)}</li>`).join('')}</ol>`;
+
+    // Nút chuyển bước – phần Thực hiện (người chỉnh sửa)
+    const execBtns = !x || !edit ? [] : ({
+      'Đã duyệt': [['▶ Bắt đầu thực hiện', 'Đang thực hiện', 'primary']],
+      'Đang thực hiện': [['📋 Bàn giao – chờ nghiệm thu', 'Chờ nghiệm thu', 'primary']],
+      'Chờ nghiệm thu': [['✓ Nghiệm thu – Hoàn thành', 'Hoàn thành', 'primary']],
+      'Hủy': [['↺ Mở lại yêu cầu', 'Đang báo giá', '']]
+    }[stage] || []).concat(!x.closed ? [['Hủy yêu cầu', 'Hủy', 'danger']] : []);
+    // Phần Phê duyệt
+    let apprState, apprBtns = [];
+    if (stage === 'Đang báo giá') {
+      apprState = '<span class="chip">Chưa gửi duyệt</span>';
+      if (x && edit) apprBtns.push(['📨 Gửi duyệt', 'Chờ duyệt', 'primary']);
+    } else if (stage === 'Chờ duyệt') {
+      apprState = '<span class="chip amber">Chờ duyệt</span>';
+      if (appr) apprBtns.push(['✓ Duyệt', 'Đã duyệt', 'primary'], ['✕ Từ chối', 'Từ chối', 'danger']);
+    } else if (stage === 'Từ chối') {
+      apprState = `<span class="chip red">Từ chối${v.apprAt ? ' · ' + dmy(v.apprAt) : ''}</span>`;
+      if (edit) apprBtns.push(['↺ Gửi duyệt lại', 'Chờ duyệt', '']);
+    } else if (stage === 'Hủy') apprState = '<span class="chip">Đã hủy</span>';
+    else apprState = `<span class="chip green">✓ Đã duyệt${v.apprAt ? ' · ' + dmy(v.apprAt) : ''}</span>`;
+    const apprNote = stage === 'Chờ duyệt' && !appr ? `<div class="note-line">Đang chờ <b>${esc(v.approver || 'người duyệt')}</b> duyệt. Chỉ tài khoản có quyền <b>Người duyệt yêu cầu</b> mới Duyệt / Từ chối được.</div>` : '';
+    const approverLocked = !edit || ['Đã duyệt', 'Đang thực hiện', 'Chờ nghiệm thu', 'Hoàn thành'].includes(stage);
+    const btnHtml = list => list.map(b => `<button type="button" class="btn ${b[2]}" data-stage="${esc(b[1])}">${b[0]}</button>`).join('');
+
+    const body = `
+      ${x ? `<div class="muted" style="margin-bottom:10px">${esc(x.id || 'Dòng ' + x.r)}${x.upd ? ' · cập nhật ' + esc(x.upd) : ''}</div>` : ''}
+      ${stepBar}
+      <div class="sec-title">① Thông tin yêu cầu</div>
+      <div class="form">
+        <div class="field full"><label for="dvTitle">Nội dung yêu cầu <span class="req">*</span></label>${inp('dvTitle', v.title, 'placeholder="VD: Vệ sinh 6 máy lạnh văn phòng kho TK"')}</div>
+        <div class="field full"><label for="dvDetail">Chi tiết / số lượng / quy cách</label><textarea id="dvDetail" placeholder="Số lượng, vị trí, yêu cầu kỹ thuật…" ${ro}>${esc(v.detail)}</textarea></div>
+        <div class="field"><label for="dvType">Loại yêu cầu</label><select class="select" id="dvType" ${ro}>${opt(DV_TYPES, v.type)}</select></div>
+        <div class="field"><label for="dvLevel">Mức độ</label><select class="select" id="dvLevel" ${ro}>${opt(DV_LEVELS, v.level)}</select></div>
+        <div class="field"><label for="dvKho">Kho</label><select class="select" id="dvKho" ${ro}>${opt(['Chung', ...KHO_CODES], v.kho)}</select></div>
+        <div class="field"><label for="dvDate">Ngày yêu cầu</label>${inp('dvDate', v.date, 'type="date"')}</div>
+        <div class="field"><label for="dvDept">Bộ phận yêu cầu <span class="req">*</span></label>${inp('dvDept', v.dept, 'list="dvDeptL" placeholder="VD: Vận hành ca 1"')}${dl('dvDeptL', names('dept'))}</div>
+        <div class="field"><label for="dvReq">Người yêu cầu</label>${inp('dvReq', v.req, 'list="dvReqL"')}${dl('dvReqL', names('req'))}</div>
+      </div>
+
+      <div class="sec-title">② Người thực hiện &amp; tiến độ</div>
+      <div class="form">
+        <div class="field"><label for="dvHandler">Người thực hiện <span class="req">*</span></label>${inp('dvHandler', v.handler, 'list="dvHL" placeholder="Người đi báo giá, làm việc với NCC"')}${dl('dvHL', names('handler'))}</div>
+        <div class="field"><label>Tiến độ hiện tại</label><div class="ro"><span class="chip ${dvStageCls(stage)}">${esc(stage)}</span>${flowIdx >= 0 ? ` <span class="muted">bước ${flowIdx + 1}/${DV_FLOW.length}</span>` : ''}</div></div>
+      </div>
+      ${execBtns.length ? `<div class="sec-actions">${btnHtml(execBtns)}</div>` : ''}
+
+      <div class="sec-title">③ Timeline dự kiến</div>
+      <div class="form">
+        <div class="field"><label for="dvStart">Bắt đầu dự kiến</label>${inp('dvStart', v.start, 'type="date"')}</div>
+        <div class="field"><label for="dvDue">Hoàn thành dự kiến <span class="req">*</span></label>${inp('dvDue', v.due, 'type="date"')}</div>
+        <div class="field"><label for="dvDone">Hoàn thành thực tế</label>${inp('dvDone', v.doneAt, 'type="date"')}</div>
+      </div>
+
+      <div class="sec-title">④ Nhà cung cấp &amp; chi phí</div>
+      <div class="form">
+        <div class="field full"><label for="dvVendor">Nhà cung cấp</label>${inp('dvVendor', v.vendor, 'list="dvVL" placeholder="Tên đơn vị, số điện thoại"')}${dl('dvVL', names('vendor'))}</div>
+        <div class="field"><label for="dvEst">Chi phí dự kiến (VNĐ)</label>${inp('dvEst', v.est || '', 'type="number" min="0" step="1000"')}</div>
+        <div class="field"><label for="dvCost">Chi phí thực tế (VNĐ)</label>${inp('dvCost', v.cost || '', 'type="number" min="0" step="1000"')}</div>
+        <div class="field full"><label for="dvDocs">Chứng từ / số phiếu</label>${inp('dvDocs', v.docs, 'placeholder="Số phiếu QLNS, hóa đơn, link báo giá…"')}</div>
+      </div>
+
+      <div class="sec-title">⑤ Phê duyệt</div>
+      <div class="appr-box">
+        <div class="form" style="margin:0">
+          <div class="field"><label for="dvAppr">Người duyệt yêu cầu</label><input class="input" id="dvAppr" value="${esc(v.approver)}" list="dvAL" placeholder="Chọn người duyệt" ${approverLocked ? 'disabled' : ''}>${dl('dvAL', approverNames)}</div>
+          <div class="field"><label>Kết quả duyệt</label><div class="ro">${apprState}</div></div>
+        </div>
+        ${apprNote}
+        ${apprBtns.length ? `<div class="row2">${btnHtml(apprBtns)}</div>` : ''}
+      </div>
+
+      <div class="sec-title">⑥ Giải trình <span class="muted" style="font-weight:500;font-size:12px">(bắt buộc khi quá hạn, xong trễ, vượt chi phí, từ chối hoặc hủy)</span></div>
+      <textarea id="dvExplain" class="dv-explain" placeholder="Lý do trễ / vượt chi phí / từ chối, hướng xử lý…" ${edit || appr ? '' : 'disabled'}>${esc(v.explain)}</textarea>
+      ${x ? `<div class="sec-title" id="imgSec">📷 Báo giá, hiện trường, nghiệm thu <span class="chip" id="imgCount"></span></div>
+        <div class="gallery" id="imgGrid"></div>
+        <label class="upload mt need-edit" id="upl"><input type="file" accept="image/*" multiple id="imgInput"><b>Bấm để chọn ảnh</b> hoặc kéo thả vào đây<br><small>Trên điện thoại có thể chụp trực tiếp · ảnh tự nén ≤ 1600px</small></label>` : ''}`;
+    openDrawer(isNew ? 'Yêu cầu dịch vụ / mua ngoài mới' : 'Chi tiết yêu cầu', body,
+      `${x ? '<button class="btn danger need-edit" id="dvDel" title="Xóa yêu cầu">🗑</button>' : ''}<span style="flex:1"></span><button class="btn" data-close>Đóng</button><button class="btn primary need-edit" id="dvSave">${isNew ? '＋ Tạo yêu cầu' : '💾 Lưu'}</button>`);
+    ['dvTitle', 'dvDept', 'dvHandler', 'dvDue', 'dvExplain', 'dvAppr'].forEach(id => $('#' + id).addEventListener('input', e => e.target.classList.remove('bad')));
+
+    const fail = (miss) => {
+      $$('#drawerBody .bad').forEach(el => el.classList.remove('bad'));
+      miss.forEach(m => $('#' + m[0]).classList.add('bad'));
+      toast('Cần nhập: ' + miss.map(m => m[1]).join(', '), 'warn');
+      const el = $('#' + miss[0][0]); el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return false;
+    };
+    const commit = (f, label) => {
+      f[DV.upd] = stampNow();
+      if (isNew) {
+        f[DV.id] = nextDVId();
+        const values = {}; Object.keys(f).forEach(c => { if (f[c] !== '' && f[c] != null) values[c] = f[c]; });
+        enqueue('append', { sheet: DVS, values, dataStart: 5, lastCol: DV_NCOL });
+        toast(`Đã tạo yêu cầu ${f[DV.id]}`);
+      } else {
+        const dateCols = [DV.date, DV.apprAt, DV.start, DV.due, DV.doneAt];
+        const changes = Object.keys(f).filter(c => String(f[c]) !== String(inputValue(val(DVS, x.r, +c), dateCols.includes(+c) ? { t: 'date' } : { t: 'text' })))
+          .map(c => ({ row: x.r, col: +c, value: f[c] }));
+        if (changes.some(ch => ch.col !== DV.upd)) { enqueue('update', { sheet: DVS, changes }); toast(label || 'Đã lưu yêu cầu'); }
+      }
+      closeDrawer(); route(true);
+      return true;
+    };
+
+    // Người duyệt chỉ có quyền xem: chỉ ghi các ô duyệt (Apps Script cũng kiểm tra lại)
+    const saveApprovalOnly = (newStage) => {
+      const explain = $('#dvExplain').value.trim();
+      if (newStage === 'Từ chối' && !explain) return fail([['dvExplain', 'giải trình (lý do từ chối)']]);
+      const f = { [DV.stage]: newStage, [DV.apprAt]: isoOf(new Date()), [DV.approver]: v.approver || state.user || '', [DV.explain]: explain };
+      return commit(f, newStage === 'Đã duyệt' ? '✓ Đã duyệt yêu cầu' : 'Đã từ chối yêu cầu');
+    };
+
+    const save = (forceStage) => {
+      if (forceStage && (forceStage === 'Đã duyệt' || forceStage === 'Từ chối')) {
+        if (!appr) { toast('Chỉ Người duyệt yêu cầu mới được Duyệt / Từ chối', 'err'); return false; }
+        if (!edit) return saveApprovalOnly(forceStage);
+      }
+      if (!edit) { toast('Tài khoản của bạn chỉ có quyền xem', 'warn'); return false; }
+      const $v = id => $('#' + id).value.trim();
+      const f = {
+        [DV.date]: $v('dvDate'), [DV.kho]: $v('dvKho'), [DV.type]: $v('dvType'), [DV.level]: $v('dvLevel'), [DV.title]: $v('dvTitle'), [DV.detail]: $v('dvDetail'),
+        [DV.dept]: $v('dvDept'), [DV.req]: $v('dvReq'), [DV.handler]: $v('dvHandler'), [DV.approver]: $v('dvAppr'), [DV.stage]: forceStage || stage,
+        [DV.apprAt]: v.apprAt || '', [DV.start]: $v('dvStart'), [DV.due]: $v('dvDue'), [DV.doneAt]: $v('dvDone'), [DV.vendor]: $v('dvVendor'),
+        [DV.est]: $v('dvEst') === '' ? '' : Number($v('dvEst')), [DV.cost]: $v('dvCost') === '' ? '' : Number($v('dvCost')), [DV.explain]: $v('dvExplain'), [DV.docs]: $v('dvDocs')
+      };
+      const st = f[DV.stage], today = isoOf(new Date());
+      // Tự điền theo bước
+      if (st === 'Đã duyệt' || st === 'Từ chối') { f[DV.apprAt] = today; if (!f[DV.approver]) f[DV.approver] = state.user || ''; }
+      if (forceStage === 'Chờ duyệt' && stage === 'Từ chối') f[DV.apprAt] = '';   // gửi duyệt lại
+      if (st === 'Hoàn thành' && !f[DV.doneAt]) f[DV.doneAt] = today;
+      if (st === 'Đang thực hiện' && !f[DV.start]) f[DV.start] = today;
+      // Kiểm tra bắt buộc
+      const miss = [];
+      if (!f[DV.title]) miss.push(['dvTitle', 'nội dung yêu cầu']);
+      if (!f[DV.dept]) miss.push(['dvDept', 'bộ phận yêu cầu']);
+      if (!f[DV.handler]) miss.push(['dvHandler', 'người thực hiện']);
+      if (!f[DV.due] && !DV_STOP.includes(st)) miss.push(['dvDue', 'hoàn thành dự kiến']);
+      if (DV_FLOW.indexOf(st) >= 1 && !f[DV.approver]) miss.push(['dvAppr', 'người duyệt yêu cầu']);
+      const due = f[DV.due] ? toDate(f[DV.due]) : null, done = f[DV.doneAt] ? toDate(f[DV.doneAt]) : null;
+      const reasons = [];
+      if (DV_STOP.includes(st)) reasons.push(st.toLowerCase());
+      if (st !== 'Hoàn thành' && !DV_STOP.includes(st) && due && due < today0()) reasons.push('đã quá hạn timeline');
+      if (st === 'Hoàn thành' && due && done && done > due) reasons.push('hoàn thành trễ hạn');
+      if (f[DV.est] && f[DV.cost] && f[DV.cost] > f[DV.est]) reasons.push('chi phí thực tế vượt dự kiến');
+      if (reasons.length && !f[DV.explain]) miss.push(['dvExplain', 'giải trình (' + reasons.join(', ') + ')']);
+      if (miss.length) return fail(miss);
+      const labels = { 'Chờ duyệt': '📨 Đã gửi duyệt', 'Đã duyệt': '✓ Đã duyệt yêu cầu', 'Từ chối': 'Đã từ chối yêu cầu', 'Hủy': 'Đã hủy yêu cầu' };
+      return commit(f, forceStage ? (labels[forceStage] || `Đã chuyển sang “${forceStage}”`) : '');
+    };
+    $('#dvSave').onclick = () => save();
+    $$('#drawerBody [data-stage]').forEach(b => b.onclick = () => save(b.dataset.stage));
+    if ($('#dvDel')) $('#dvDel').onclick = () => {
+      if (!confirm(`Xóa yêu cầu “${x.title}”?\nNên chuyển sang “Hủy” kèm giải trình để giữ lịch sử.\n\nVẫn xóa dòng ${x.r}?`)) return;
+      enqueue('clearRow', { sheet: DVS, row: x.r, lastCol: DV_NCOL }); toast('Đã xóa yêu cầu'); closeDrawer(); route(true);
+    };
+    if (x) { drawImages(DVS, x.r); bindUpload(tableDef(DVS), x.r); }
+    if (edit) setTimeout(() => $('#dvTitle').focus(), 250);
+  }
+
+  /* ------------------------------------------------------------------ PHÂN QUYỀN TRUY CẬP (Hệ thống)
+   * Danh sách tài khoản nằm ở tab ẩn WEB_PHAN_QUYEN; chỉ Quản trị tải / sửa được (Apps Script kiểm tra). */
+  const PERM_ROWS = [
+    ['Xem toàn bộ dữ liệu, báo cáo, tải Excel', 1, 1, 1, 1],
+    ['Thêm / sửa / xóa dữ liệu, tải ảnh', 0, 1, 0, 1],
+    ['Sửa dropdown, thêm mã NVL / CCDC', 0, 1, 0, 1],
+    ['Tạo, cập nhật Task và Dịch vụ mua ngoài', 0, 1, 0, 1],
+    ['Duyệt / Từ chối yêu cầu (Dành cho Quản lý)', 0, 0, 1, 1],
+    ['Sao lưu ngay lên Drive', 0, 1, 0, 1],
+    ['Quản lý phân quyền truy cập', 0, 0, 0, 1]
+  ];
+  function renderPerm(view) {
+    setCrumb('Phân quyền truy cập', 'Hệ thống');
+    const me = state.me;
+    view.innerHTML = `
+      <div class="grid g2">
+        <div class="card"><div class="card-h"><h3>Tài khoản đang đăng nhập</h3></div><div class="card-b">
+          ${me ? `<div class="setting-row"><label>Họ tên</label><div><b>${esc(me.name || state.user || '—')}</b></div></div>
+            <div class="setting-row"><label>Vai trò</label><div><span class="role-badge ${me.role}">${esc(ROLE_LABEL[me.role])}</span> ${me.approver ? '<span class="chip green">Người duyệt yêu cầu</span>' : ''}</div></div>
+            <div class="setting-row"><label>Đăng nhập bằng</label><div>${me.master ? 'Mã chung (Quản trị)' : 'Mã truy cập cá nhân'}</div></div>`
+            : `<p class="muted" style="margin:0">${state.apiUrl ? 'Chưa nhận được thông tin quyền từ Apps Script. Nếu đã đăng nhập mà vẫn thấy dòng này, cần dán Code.gs mới và chạy setupV4 (xem README).' : 'Chưa kết nối Google Sheet.'}</p>`}
+          <div class="sec-actions"><button class="btn" id="pSwitch">⇄ Đổi tài khoản</button></div>
+        </div></div>
+        <div class="card"><div class="card-h"><h3>Quyền của từng vai trò</h3></div>
+          <div class="tbl-wrap" style="max-height:none"><table class="tbl perm-matrix"><thead><tr><th>Quyền</th><th>Người xem</th><th>Người chỉnh sửa</th><th>Người duyệt yêu cầu*</th><th>Quản trị</th></tr></thead><tbody>
+          ${PERM_ROWS.map(r => `<tr><td>${esc(r[0])}</td>${r.slice(1).map(x => `<td class="${x ? 'y' : 'n'}">${x ? '✓' : '—'}</td>`).join('')}</tr>`).join('')}
+          </tbody></table></div>
+          <div class="card-b note-line">* “Người duyệt yêu cầu” là quyền <b>cộng thêm</b>, gắn cho tài khoản Người xem hoặc Người chỉnh sửa: được Duyệt / Từ chối Dịch vụ mua ngoài và duyệt hoàn thành Task đang “Chờ duyệt”. Quản trị luôn có quyền duyệt.</div>
+        </div>
+      </div>
+      <div class="card mt" id="pUsersCard"><div class="card-h"><div><h3>Danh sách tài khoản</h3><div class="sub" style="margin-top:3px">Mỗi người dùng 1 mã truy cập riêng. Mã chung (đặt bằng hàm setPasscode) chỉ nên để Quản trị giữ.</div></div>
+        <div class="right">${isAdmin() ? '<button class="btn primary" id="pAdd">＋ Thêm tài khoản</button>' : ''}</div></div>
+        <div id="pUsers">${isAdmin() ? '<div class="empty">Đang tải danh sách…</div>' : '<div class="empty">Chỉ Quản trị xem và chỉnh sửa được danh sách tài khoản.</div>'}</div></div>`;
+    $('#pSwitch').onclick = () => { state.authFail = true; showLogin(true, 'Nhập mã truy cập của tài khoản khác.'); };
+    if (!isAdmin()) return;
+    $('#pAdd').onclick = () => openUserModal(null);
+    loadUsers();
+  }
+
+  async function loadUsers() {
+    const host = $('#pUsers'); if (!host) return;
+    if (!state.apiUrl) { host.innerHTML = '<div class="empty">Cần kết nối Google Sheet.</div>'; return; }
+    try {
+      const j = await api('users');
+      state.users = j.users || [];
+      drawUsers();
+    } catch (e) { host.innerHTML = `<div class="empty">Không tải được danh sách: ${esc(e.message)}<br><small>Nếu báo “Hành động không hợp lệ”, cần dán Code.gs mới và chạy setupV4.</small></div>`; }
+  }
+
+  function drawUsers() {
+    const host = $('#pUsers'); if (!host) return;
+    const list = state.users || [];
+    if (!list.length) { host.innerHTML = '<div class="empty">Chưa có tài khoản nào. Bấm “＋ Thêm tài khoản” để cấp mã truy cập cho từng người.</div>'; return; }
+    const order = { admin: 0, editor: 1, viewer: 2 };
+    const rows = list.slice().sort((a, b) => (b.active - a.active) || (order[a.role] - order[b.role]) || a.name.localeCompare(b.name, 'vi'));
+    host.innerHTML = `<div class="tbl-wrap" style="max-height:none"><table class="tbl"><thead><tr><th>Họ tên</th><th>Bộ phận</th><th>Vai trò</th><th>Người duyệt</th><th>Trạng thái</th><th>Mã truy cập</th><th>Cập nhật</th><th></th></tr></thead><tbody>
+      ${rows.map(u => `<tr data-row="${u.row}" class="${u.active ? '' : 'muted'}">
+        <td><b>${esc(u.name)}</b>${u.note ? `<div class="muted" style="font-size:12px">${esc(u.note)}</div>` : ''}</td>
+        <td>${esc(u.dept)}</td>
+        <td><span class="role-badge ${u.role}">${esc(ROLE_LABEL[u.role])}</span></td>
+        <td>${u.approver ? '<span class="chip green">✓ Có</span>' : '<span class="muted">—</span>'}</td>
+        <td>${u.active ? '<span class="chip green">Hoạt động</span>' : '<span class="chip red">Khóa</span>'}</td>
+        <td class="nowrap"><span class="pin" data-pin="${esc(u.pin)}">••••••••</span> <button class="ra" data-show title="Hiện / ẩn mã">👁</button><button class="ra" data-copy title="Sao chép mã">⧉</button></td>
+        <td class="nowrap date">${esc(u.upd)}</td>
+        <td class="rowact"><button class="ra" data-edit title="Sửa">✎</button><button class="ra" data-lock title="${u.active ? 'Khóa' : 'Mở khóa'}">${u.active ? '🔒' : '🔓'}</button><button class="ra" data-del title="Xóa">🗑</button></td></tr>`).join('')}
+      </tbody></table></div>`;
+    const userOf = el => (state.users || []).find(u => u.row === +el.closest('tr').dataset.row);
+    $$('[data-show]', host).forEach(b => b.onclick = () => { const s = b.parentNode.querySelector('.pin'); s.textContent = s.textContent.startsWith('•') ? s.dataset.pin : '••••••••'; });
+    $$('[data-copy]', host).forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.parentNode.querySelector('.pin').dataset.pin); toast('Đã sao chép mã truy cập'); } catch (e) { toast('Không sao chép được – bấm 👁 để xem mã', 'warn'); } });
+    $$('[data-edit]', host).forEach(b => b.onclick = () => openUserModal(userOf(b)));
+    $$('[data-lock]', host).forEach(b => b.onclick = async () => {
+      const u = userOf(b);
+      if (u.active && state.me && !state.me.master && u.name === state.me.name && !confirm('Đây là tài khoản bạn đang dùng. Khóa thì bạn sẽ bị đăng xuất. Tiếp tục?')) return;
+      await saveUser({ ...u, active: !u.active });
+    });
+    $$('[data-del]', host).forEach(b => b.onclick = async () => {
+      const u = userOf(b);
+      if (!confirm(`Xóa tài khoản “${u.name}”?\nNgười này sẽ không đăng nhập được bằng mã cũ. Nên dùng 🔒 Khóa nếu chỉ tạm ngưng.`)) return;
+      try { await api('deleteUser', { row: u.row, name: u.name }); toast('Đã xóa tài khoản ' + u.name); loadUsers(); }
+      catch (e) { toast('Không xóa được: ' + e.message, 'err'); }
+    });
+  }
+
+  async function saveUser(u) {
+    try {
+      const j = await api('saveUser', { row: u.row || '', name: u.name, dept: u.dept, pin: u.pin, role: u.role, approver: !!u.approver, active: u.active !== false, note: u.note });
+      toast(u.row ? 'Đã cập nhật tài khoản ' + u.name : 'Đã tạo tài khoản ' + u.name);
+      await loadUsers();
+      return j;
+    } catch (e) { toast('Không lưu được: ' + e.message, 'err'); return null; }
+  }
+
+  function genPin() { const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; let s = ''; const a = new Uint32Array(8); crypto.getRandomValues(a); a.forEach(n => { s += abc[n % abc.length]; }); return s; }
+
+  function openUserModal(u) {
+    const v = u || { name: '', dept: '', role: 'editor', approver: false, active: true, pin: genPin(), note: '' };
+    const roles = [['viewer', 'Người xem', 'Chỉ xem, tải Excel'], ['editor', 'Người chỉnh sửa', 'Thêm / sửa / xóa dữ liệu'], ['admin', 'Quản trị', 'Toàn quyền + phân quyền']];
+    const m = modal(`<h3>${u ? 'Sửa tài khoản' : '＋ Thêm tài khoản'}</h3>
+      <div class="field"><label for="uName">Họ tên <span class="req">*</span></label><input class="input" id="uName" value="${esc(v.name)}" placeholder="VD: Lê Quang Tuấn"></div>
+      <div class="field"><label for="uDept">Bộ phận / chức vụ</label><input class="input" id="uDept" value="${esc(v.dept)}" placeholder="VD: Thủ kho KTC Tân Kim"></div>
+      <div class="field"><label>Vai trò</label><div class="role-pick">${roles.map(r => `<label><input type="radio" name="uRole" value="${r[0]}" ${v.role === r[0] ? 'checked' : ''}><b>${r[1]}</b><span class="muted">${r[2]}</span></label>`).join('')}</div></div>
+      <label class="chk"><input type="checkbox" id="uAppr" ${v.approver ? 'checked' : ''}> <span><b>Người duyệt yêu cầu</b> (Dành cho Quản lý): được Duyệt / Từ chối Dịch vụ mua ngoài và duyệt hoàn thành Task</span></label>
+      <div class="field"><label for="uPin">Mã truy cập (ít nhất 6 ký tự)</label><div style="display:flex;gap:8px"><input class="input pin" id="uPin" value="${esc(v.pin)}" style="flex:1;text-transform:uppercase"><button class="btn" id="uGen" type="button" title="Tạo mã ngẫu nhiên">🎲 Tạo mã</button></div></div>
+      <div class="field"><label for="uNote">Ghi chú</label><input class="input" id="uNote" value="${esc(v.note)}"></div>
+      <label class="chk"><input type="checkbox" id="uActive" ${v.active !== false ? 'checked' : ''}> Đang hoạt động (bỏ chọn = khóa tài khoản)</label>
+      <div class="row"><button class="btn" id="uCancel" type="button">Hủy</button><button class="btn primary" id="uOk" type="button">💾 Lưu</button></div>`, 'wide');
+    m.$('#uGen').onclick = () => { m.$('#uPin').value = genPin(); };
+    m.$('#uCancel').onclick = m.close;
+    m.$('#uOk').onclick = async () => {
+      const name = m.$('#uName').value.trim(), pin = m.$('#uPin').value.trim().toUpperCase();
+      if (!name) { toast('Cần nhập họ tên', 'warn'); m.$('#uName').focus(); return; }
+      if (pin.length < 6) { toast('Mã truy cập cần ít nhất 6 ký tự', 'warn'); m.$('#uPin').focus(); return; }
+      m.$('#uOk').disabled = true;
+      const j = await saveUser({ row: u && u.row, name, dept: m.$('#uDept').value.trim(), pin, role: (m.$('input[name=uRole]:checked') || {}).value || 'viewer',
+        approver: m.$('#uAppr').checked, active: m.$('#uActive').checked, note: m.$('#uNote').value.trim() });
+      if (!j) { m.$('#uOk').disabled = false; return; }
+      m.close();
+      if (!u) modal(`<h3>✓ Đã tạo tài khoản</h3><p>Gửi mã truy cập này cho <b>${esc(name)}</b> (qua tin nhắn riêng):</p>
+        <div class="appr-box" style="text-align:center;font-size:22px"><span class="pin">${esc(j.pin || pin)}</span></div>
+        <p class="note-line">Người dùng mở web → nhập mã này ở ô “Mã truy cập”. Có thể đổi hoặc khóa mã bất cứ lúc nào.</p>
+        <div class="row"><button class="btn primary" type="button" onclick="this.closest('.modal-bg').remove()">Xong</button></div>`);
+    };
+    setTimeout(() => m.$('#uName').focus(), 50);
   }
 
   /* ------------------------------------------------------------------ export */
@@ -2080,15 +2606,20 @@
   }
 
   /* ------------------------------------------------------------------ login */
-  function showLogin(authFail) {
+  function showLogin(authFail, msg) {
     if ($('.modal-bg')) return;
     const bg = document.createElement('div'); bg.className = 'modal-bg';
-    bg.innerHTML = `<div class="modal"><img class="login-logo" src="assets/img/ghn-logo.png" alt="GHN"><h3>Đăng nhập Kho Vật Tư M12</h3><p class="muted" style="margin:0">${authFail ? 'Mã truy cập không đúng hoặc chưa nhập.' : 'Nhập tên để ghi nhận người thay đổi dữ liệu.'}</p>
-      <div class="field"><label>Họ tên / bộ phận</label><input class="input" id="lUser" value="${esc(state.user)}" placeholder="VD: Trần B – Thủ kho ST"></div>
-      <div class="field"><label>Mã truy cập</label><input class="input" id="lKey" type="password" value="${esc(state.key)}"></div>
+    bg.innerHTML = `<div class="modal"><img class="login-logo" src="assets/img/ghn-logo.png" alt="GHN"><h3>Đăng nhập Kho Vật Tư M12</h3><p class="muted" style="margin:0">${authFail ? esc(msg || 'Mã truy cập không đúng hoặc chưa nhập.') : 'Nhập mã truy cập cá nhân do Quản trị cấp.'}</p>
+      <div class="field"><label for="lKey">Mã truy cập</label><input class="input" id="lKey" type="password" autocomplete="current-password" value="${esc(state.key)}"></div>
+      <div class="field"><label for="lUser">Họ tên / bộ phận <span class="muted" style="font-weight:500">(chỉ cần khi dùng mã chung)</span></label><input class="input" id="lUser" value="${esc(state.user)}" placeholder="VD: Trần B – Thủ kho ST"></div>
       <div class="row"><button class="btn" id="lLater">Để sau</button><button class="btn primary" id="lOk">Vào hệ thống</button></div></div>`;
     document.body.appendChild(bg);
-    $('#lOk').onclick = () => { state.user = $('#lUser').value.trim(); state.key = $('#lKey').value.trim(); LS.set('user', state.user); LS.set('key', state.key); state.authFail = false; bg.remove(); fetchAll().then(flush); };
+    $('#lOk').onclick = () => {
+      const newKey = $('#lKey').value.trim();
+      if (newKey !== state.key) { state.me = null; LS.del('me'); }   // đổi tài khoản → chờ máy chủ báo quyền mới
+      state.user = $('#lUser').value.trim(); state.key = newKey; LS.set('user', state.user); LS.set('key', state.key); state.authFail = false; bg.remove(); applyRoleUi(); fetchAll().then(flush);
+    };
+    setTimeout(() => $('#lKey').focus(), 50);
     $('#lLater').onclick = () => bg.remove();
     $('#lKey').addEventListener('keydown', e => { if (e.key === 'Enter') $('#lOk').click(); });
   }
@@ -2109,6 +2640,8 @@
   /* ------------------------------------------------------------------ init */
   function init() {
     initTheme();
+    applyRoleUi();
+    $('#roleBadge').onclick = () => { location.hash = '#/phan-quyen'; };
     $('#khoFilter').innerHTML = '<option value="ALL">Tất cả kho</option>' + KHO.map(k => `<option value="${k.code}">${esc(k.code)} – ${esc(k.short)}</option>`).join('');
     $('#khoFilter').value = state.kho;
     $('#khoFilter').onchange = e => { setKho(e.target.value); Object.values(state.views).forEach(v => v.page = 1); route(true); };

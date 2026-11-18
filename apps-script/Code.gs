@@ -43,11 +43,25 @@ function doPost(e) {
   return handle_(body.action, body);
 }
 
+/* Thao tác ghi (người xem bị chặn) và thao tác chỉ dành cho Quản trị */
+var WRITE_ACTIONS = ['update', 'append', 'clearRow', 'addColumn', 'upload', 'deleteImage', 'setList', 'backup'];
+var ADMIN_ACTIONS = ['users', 'saveUser', 'deleteUser'];
+
 function handle_(action, p) {
   try {
-    checkKey_(p.key);
+    var me = auth_(p.key, p.user);
+    p.user = me.name || p.user;           // nhật ký ghi theo tên tài khoản (không tự khai)
+    p._me = me;
+    if (WRITE_ACTIONS.indexOf(action) >= 0 && me.role === 'viewer' && !approvalOnly_(action, p, me))
+      throw new Error('PERM: Tài khoản của bạn chỉ có quyền xem');
+    if (ADMIN_ACTIONS.indexOf(action) >= 0 && me.role !== 'admin')
+      throw new Error('PERM: Chỉ Quản trị mới quản lý phân quyền truy cập');
     var res;
     switch (action) {
+      case 'whoami': res = { ok: true }; break;
+      case 'users': res = { ok: true, users: listUsers_() }; break;
+      case 'saveUser': res = userLock_(function () { return saveUser_(p); }); break;
+      case 'deleteUser': res = userLock_(function () { return deleteUser_(p); }); break;
       case 'ping': res = { ok: true, rev: rev_(), title: ss_().getName() }; break;
       // since = số phiên bản web đang có → trả thêm danh sách tab cần tải lại (null = tải lại toàn bộ)
       case 'rev':
@@ -67,6 +81,7 @@ function handle_(action, p) {
       case 'log': res = { ok: true, log: readLog_(Number(p.limit) || 300) }; break;
       default: res = { ok: false, error: 'Hành động không hợp lệ: ' + action };
     }
+    if (res && typeof res === 'object') res.me = { name: me.name, role: me.role, approver: !!me.approver, master: !!me.master };
     return out_(res);
   } catch (err) {
     return out_({ ok: false, error: String(err && err.message || err) });
@@ -82,13 +97,153 @@ function out_(obj) {
 var CACHE_TTL = 21600; // 6 giờ – tối đa cho phép
 function cache_() { return CacheService.getScriptCache(); }
 
-function checkKey_(key) {
+/* ============================ PHÂN QUYỀN TRUY CẬP ============================
+ * - Mã chung (APP_PASSCODE, đặt bằng setPasscode) = Quản trị: toàn quyền + phân quyền.
+ * - Mỗi người có Mã truy cập riêng ở tab WEB_PHAN_QUYEN (tab ẩn, web không tải về):
+ *     Vai trò: Người xem / Người chỉnh sửa / Quản trị
+ *     Người duyệt yêu cầu (Quản lý): Có / Không → được Duyệt / Từ chối ở mục Dành cho Quản lý
+ * - Kiểm tra quyền ở đây (máy chủ), không phụ thuộc giao diện web. */
+var USERS_SHEET = 'WEB_PHAN_QUYEN';
+var USER_HEAD = ['Họ tên', 'Bộ phận', 'Mã truy cập', 'Vai trò', 'Người duyệt yêu cầu (Quản lý)', 'Trạng thái', 'Ghi chú', 'Cập nhật lần cuối'];
+var ROLE_NAMES = { viewer: 'Người xem', editor: 'Người chỉnh sửa', admin: 'Quản trị' };
+// Cột được phép ghi khi duyệt (dành cho Người duyệt có vai trò Người xem)
+var APPROVAL_COLS = { DV_MUA_NGOAI: [11, 12, 13, 20, 23], QL_TASK: [10, 12, 13, 14] };
+
+function masterPass_() {
   var c = cache_(), pass = c.get('PASS');
-  if (pass === null) {
-    pass = PropertiesService.getScriptProperties().getProperty('APP_PASSCODE') || '';
-    c.put('PASS', pass, 600);
+  if (pass === null) { pass = PropertiesService.getScriptProperties().getProperty('APP_PASSCODE') || ''; c.put('PASS', pass, 600); }
+  return pass;
+}
+
+function roleKey_(s) {
+  s = String(s || '').toLowerCase();
+  if (/quản trị|admin/.test(s)) return 'admin';
+  if (/chỉnh sửa|sửa|edit/.test(s)) return 'editor';
+  return 'viewer';
+}
+
+/** Bảng mã → tài khoản (lưu đệm 5 phút) */
+function usersMap_() {
+  var c = cache_(), s = c.get('USERS');
+  if (s) { try { return JSON.parse(s); } catch (e) {} }
+  var map = {}, sh = ss_().getSheetByName(USERS_SHEET);
+  if (sh && sh.getLastRow() > 1) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, USER_HEAD.length).getValues().forEach(function (r) {
+      var pin = String(r[2] || '').trim().toUpperCase();
+      if (!pin || !String(r[0]).trim()) return;
+      map[pin] = { name: String(r[0]).trim(), dept: String(r[1] || ''), role: roleKey_(r[3]),
+        approver: /^(có|x|yes|true|✓)$/i.test(String(r[4]).trim()), active: !/khóa|khoá|ngừng/i.test(String(r[5])) };
+    });
   }
-  if (pass && String(key || '') !== pass) throw new Error('AUTH: Sai mã truy cập');
+  c.put('USERS', JSON.stringify(map), 300);
+  return map;
+}
+
+function auth_(key, typedName) {
+  key = String(key || '').trim();
+  var pass = masterPass_();
+  if (pass && key === pass) return { name: String(typedName || '').trim() || 'Quản trị', role: 'admin', approver: true, master: true };
+  var u = key ? usersMap_()[key.toUpperCase()] : null;
+  if (u) {
+    if (!u.active) throw new Error('AUTH: Tài khoản đã bị khóa – liên hệ Quản trị');
+    return { name: u.name, role: u.role, approver: u.approver, dept: u.dept };
+  }
+  if (!pass) return { name: String(typedName || '').trim(), role: 'admin', approver: true, master: true };   // chưa đặt mã chung
+  throw new Error('AUTH: Sai mã truy cập');
+}
+
+/** Người duyệt có vai trò Người xem: chỉ cho phép thao tác duyệt / từ chối (đúng cột duyệt) */
+function approvalOnly_(action, p, me) {
+  if (!me.approver || action !== 'update') return false;
+  var allow = APPROVAL_COLS[p.sheet]; if (!allow) return false;
+  var ch = p.changes || [];
+  return ch.length > 0 && ch.every(function (c) { return allow.indexOf(Number(c.col)) >= 0; }) &&
+    ch.some(function (c) { return isApprovalChange_(p.sheet, c, null); });
+}
+
+/** Thay đổi này có phải hành động duyệt không? (cur: giá trị hiện tại của ô, nếu biết) */
+function isApprovalChange_(sheet, c, cur) {
+  var v = String(c.value || '');
+  if (sheet === 'DV_MUA_NGOAI') return Number(c.col) === 12 && (v === 'Đã duyệt' || v === 'Từ chối');
+  if (sheet === 'QL_TASK') return Number(c.col) === 10 && v === 'Hoàn thành' && (cur === null || String(cur) === 'Chờ duyệt');
+  return false;
+}
+
+/** Chặn duyệt / từ chối nếu tài khoản không phải Người duyệt yêu cầu */
+function checkApproval_(sh, changes, me) {
+  var name = sh.getName();
+  if (!me || !APPROVAL_COLS[name]) return;
+  var anyAppr = false;
+  changes.forEach(function (c) {
+    var cur = c.row ? sh.getRange(Number(c.row), Number(c.col)).getValue() : '';
+    if (!isApprovalChange_(name, c, cur)) return;
+    anyAppr = true;
+    if (!me.approver) throw new Error('PERM: Chỉ Người duyệt yêu cầu mới được duyệt / từ chối');
+  });
+  // Người duyệt có vai trò Người xem: lần ghi này phải đúng là 1 thao tác duyệt
+  if (me.role === 'viewer' && !anyAppr) throw new Error('PERM: Tài khoản của bạn chỉ có quyền xem');
+}
+
+function usersSheet_() {
+  var ss = ss_(), sh = ss.getSheetByName(USERS_SHEET);
+  if (sh) return sh;
+  sh = ss.insertSheet(USERS_SHEET);
+  sh.getRange(1, 1, 1, USER_HEAD.length).setValues([USER_HEAD]).setFontWeight('bold').setBackground('#0f3d3a').setFontColor('#ffffff');
+  sh.setFrozenRows(1);
+  var list = function (vals) { return SpreadsheetApp.newDataValidation().requireValueInList(vals, true).build(); };
+  sh.getRange('D2:D500').setDataValidation(list(['Người xem', 'Người chỉnh sửa', 'Quản trị']));
+  sh.getRange('E2:E500').setDataValidation(list(['Có', 'Không']));
+  sh.getRange('F2:F500').setDataValidation(list(['Hoạt động', 'Khóa']));
+  sh.getRange('C2:C500').setNumberFormat('@');
+  sh.setColumnWidth(1, 180); sh.setColumnWidth(5, 190); sh.setColumnWidth(7, 220); sh.setColumnWidth(8, 170);
+  try { sh.hideSheet(); } catch (e) {}
+  return sh;
+}
+
+function listUsers_() {
+  var sh = ss_().getSheetByName(USERS_SHEET);
+  if (!sh || sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, USER_HEAD.length).getValues().map(function (r, i) {
+    return { row: i + 2, name: String(r[0]), dept: String(r[1]), pin: String(r[2]), role: roleKey_(r[3]), approver: /^(có|x|yes|true|✓)$/i.test(String(r[4]).trim()),
+      active: !/khóa|khoá|ngừng/i.test(String(r[5])), note: String(r[6]), upd: r[7] instanceof Date ? fmtDT_(r[7]) : String(r[7]) };
+  }).filter(function (u) { return u.name.trim(); });
+}
+
+function genPin_() {
+  var abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', s = '';
+  for (var i = 0; i < 8; i++) s += abc.charAt(Math.floor(Math.random() * abc.length));
+  return s;
+}
+
+function userLock_(fn) {
+  var lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try { var r = fn(); SpreadsheetApp.flush(); cache_().remove('USERS'); return r; } finally { lock.releaseLock(); }
+}
+
+function saveUser_(p) {
+  var sh = usersSheet_(), name = String(p.name || '').trim();
+  if (!name) throw new Error('Thiếu họ tên');
+  var pin = String(p.pin || '').trim().toUpperCase() || genPin_();
+  if (pin.length < 6) throw new Error('Mã truy cập cần ít nhất 6 ký tự');
+  if (pin === String(masterPass_()).toUpperCase()) throw new Error('Mã truy cập trùng mã chung – chọn mã khác');
+  var row = Number(p.row) || 0;
+  listUsers_().forEach(function (u) { if (u.row !== row && u.pin.toUpperCase() === pin) throw new Error('Mã truy cập đã được dùng cho ' + u.name); });
+  var vals = [[name, String(p.dept || ''), pin, ROLE_NAMES[p.role] || 'Người xem', p.approver ? 'Có' : 'Không', p.active === false ? 'Khóa' : 'Hoạt động', String(p.note || ''), new Date()]];
+  if (!row) row = Math.max(sh.getLastRow(), 1) + 1;
+  sh.getRange(row, 1, 1, USER_HEAD.length).setValues(vals);
+  sh.getRange(row, 8).setNumberFormat('dd/mm/yyyy HH:mm');
+  log_(p, p.row ? 'Sửa quyền' : 'Thêm tài khoản', USERS_SHEET, name, '', (ROLE_NAMES[p.role] || 'Người xem') + (p.approver ? ' + Người duyệt' : '') + (p.active === false ? ' (Khóa)' : ''));
+  return { ok: true, row: row, pin: pin };
+}
+
+function deleteUser_(p) {
+  var sh = usersSheet_(), row = Number(p.row);
+  if (!row || row < 2 || row > sh.getLastRow()) throw new Error('Không tìm thấy tài khoản');
+  var name = String(sh.getRange(row, 1).getValue());
+  if (p.name && name !== p.name) throw new Error('Danh sách đã thay đổi – tải lại trang rồi thử lại');
+  sh.deleteRow(row);
+  log_(p, 'Xóa tài khoản', USERS_SHEET, name, '', '');
+  return { ok: true };
 }
 
 function withLock_(fn, sheetName) {
@@ -195,7 +350,7 @@ function getAll_(only, noDv) {
   var sheets = {}, order = [];
   ss.getSheets().forEach(function (sh) {
     var name = sh.getName();
-    if (name === CFG.LOG_SHEET) return;
+    if (name === CFG.LOG_SHEET || name === USERS_SHEET) return;   // tab phân quyền chứa mã truy cập: không gửi về web
     if (want && want.indexOf(name) < 0) return;
     order.push(name);
     sheets[name] = readSheet_(sh, noDv);
@@ -287,6 +442,27 @@ var AUTO_SHEETS = {
       J: ['Chưa làm', 'Đang làm', 'Chờ duyệt', 'Tạm hoãn', 'Hoàn thành', 'Hủy'] },
     dates: ['H', 'I', 'L'],
     widths: { A: 90, B: 260, C: 260, K: 260, M: 220, N: 170 }
+  },
+
+  // Dành cho Quản lý · mua CCDC ngoài hệ thống kho / dịch vụ nhà cung cấp (vệ sinh máy lạnh, côn trùng, sửa chữa…)
+  DV_MUA_NGOAI: {
+    after: 'QL_TASK', rows: 1000,
+    title: 'DỊCH VỤ MUA NGOÀI – CỤM M12',
+    sub: 'Mua CCDC ngoài hệ thống kho hoặc dịch vụ nhà cung cấp. Thứ tự: Yêu cầu → Người thực hiện & tiến độ → Timeline → Chi phí → Phê duyệt → Giải trình. Chỉ Người duyệt yêu cầu (tab Phân quyền) mới được Duyệt / Từ chối. Tiến độ: Đang báo giá → Chờ duyệt → Đã duyệt → Đang thực hiện → Chờ nghiệm thu → Hoàn thành.',
+    headers: ['Mã yêu cầu', 'Ngày yêu cầu', 'Kho', 'Loại yêu cầu', 'Mức độ', 'Nội dung yêu cầu', 'Chi tiết / số lượng',
+      'Bộ phận yêu cầu', 'Người yêu cầu', 'Người thực hiện', 'Người duyệt yêu cầu',
+      'Tiến độ', 'Ngày duyệt', 'Bắt đầu dự kiến', 'Hoàn thành dự kiến', 'Hoàn thành thực tế',
+      'Nhà cung cấp', 'Chi phí dự kiến (VNĐ)', 'Chi phí thực tế (VNĐ)', 'Giải trình', 'Chứng từ / số phiếu',
+      'Tình trạng hạn', 'Cập nhật lần cuối'],
+    lists: { C: ['Chung', 'HCM20', 'ST', 'TK'], D: ['Dịch vụ', 'CCDC ngoài hệ thống', 'Sửa chữa', 'Khác'],
+      E: ['Khẩn cấp', 'Cao', 'Bình thường'],
+      L: ['Đang báo giá', 'Chờ duyệt', 'Đã duyệt', 'Đang thực hiện', 'Chờ nghiệm thu', 'Hoàn thành', 'Từ chối', 'Hủy'] },
+    dates: ['B', 'M', 'N', 'O', 'P'], money: ['R', 'S'], texts: ['A', 'U'],
+    formulas: {
+      // Tình trạng hạn: so Hoàn thành dự kiến (O) với hôm nay / ngày hoàn thành thực tế (P)
+      V: '=IF(RC6="","",IF(RC12="Hoàn thành",IF(AND(RC16<>"",RC15<>"",RC16>RC15),"Trễ "&(RC16-RC15)&" ngày","Đúng hạn"),IF(OR(RC12="Từ chối",RC12="Hủy"),"",IF(RC15="","Chưa có timeline",IF(RC15<TODAY(),"QUÁ HẠN "&(TODAY()-RC15)&" ngày",IF(RC15-TODAY()<=3,"Sắp đến hạn","Trong hạn"))))))'
+    },
+    widths: { A: 95, F: 260, G: 200, H: 140, J: 140, K: 140, L: 130, Q: 160, T: 260, U: 140, V: 130, W: 170 }
   },
 
   SO_NX_CCDC: {
@@ -430,7 +606,7 @@ function addCols_(sh, specs, last, out) {
  */
 function setupV2() {
   var ss = ss_(), out = [];
-  ['SO_NX_CCDC', 'TON_KHO_CCDC', 'CAP_PHAT_PDA', 'QL_TASK'].forEach(function (n) {
+  ['SO_NX_CCDC', 'TON_KHO_CCDC', 'CAP_PHAT_PDA', 'QL_TASK', 'DV_MUA_NGOAI'].forEach(function (n) {
     if (ss.getSheetByName(n)) out.push(n + ': đã có'); else { createAutoSheet_(n); out.push(n + ': đã tạo'); }
   });
   var nx = ss.getSheetByName('SO_NHAP_XUAT');
@@ -496,6 +672,7 @@ function canWrite_(sh, cell) {
 /** p.changes = [{row, col, value}] (col là số, bắt đầu từ 1) */
 function update_(p) {
   var sh = sheet_(p.sheet), changes = p.changes || [], done = 0, skipped = [];
+  checkApproval_(sh, changes, p._me);
   changes.forEach(function (ch) {
     var cell = sh.getRange(Number(ch.row), Number(ch.col));
     if (!canWrite_(sh, cell)) { skipped.push(cell.getA1Notation()); return; }
@@ -513,6 +690,7 @@ function update_(p) {
 /** Thêm dòng: p.values = {colNumber: value}, p.dataStart, p.lastCol */
 function append_(p) {
   var sh = sheet_(p.sheet);
+  checkApproval_(sh, Object.keys(p.values || {}).map(function (c) { return { col: Number(c), value: p.values[c] }; }), p._me);
   var start = Number(p.dataStart) || 5, lastCol = Number(p.lastCol) || sh.getLastColumn();
   var keys = Object.keys(p.values || {}).map(Number);
   var maxR = Math.max(sh.getMaxRows(), start);
@@ -637,7 +815,17 @@ function syncPdaSummary_(sh) {
 /** Chạy tay 1 lần (hoặc bất cứ lúc nào): bổ sung cột thiết bị còn thiếu vào Bảng tổng hợp PDA,
  *  và cho cột Tên thiết bị ở CAP_PHAT_PDA nhận IMEI có/không có chữ "IMEI:" phía trước. */
 function setupV3() {
-  var out = [syncPdaSummary_()];
+  var out = [syncPdaSummary_()], ss = ss_();
+  // Dành cho Quản lý · Dịch vụ mua ngoài
+  if (ss.getSheetByName('DV_MUA_NGOAI')) out.push('DV_MUA_NGOAI: đã có'); else { createAutoSheet_('DV_MUA_NGOAI'); out.push('DV_MUA_NGOAI: đã tạo'); }
+  var hd = ss.getSheetByName('HUONG_DAN');
+  if (hd) {
+    var colB = hd.getRange(1, 2, Math.max(hd.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
+    if (colB.indexOf('DV_MUA_NGOAI') < 0) {
+      hd.getRange(hd.getLastRow() + 1, 1, 1, 3).setValues([['', 'DV_MUA_NGOAI', 'Dịch vụ mua ngoài (dành cho Quản lý): mua CCDC ngoài hệ thống kho hoặc dịch vụ nhà cung cấp. Ghi yêu cầu → người xử lý, người duyệt → tiến độ & timeline dự kiến → chi phí → giải trình (bắt buộc khi trễ hạn, vượt chi phí, từ chối hoặc hủy).']]).setWrap(true);
+      out.push('HUONG_DAN: đã thêm mục DV_MUA_NGOAI');
+    }
+  }
   var cp = ss_().getSheetByName('CAP_PHAT_PDA');
   if (cp) {
     // Khớp theo phần số của IMEI (bỏ chữ "IMEI:", khoảng trắng…) → quét mã vạch hay gõ có tiền tố đều tìm được
@@ -776,3 +964,26 @@ function setPasscode() {
 function colNum_(L) { var n = 0; for (var i = 0; i < L.length; i++) n = n * 26 + L.charCodeAt(i) - 64; return n; }
 function colLetter_(n) { var s = ''; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 function fmtDT_(d) { return Utilities.formatDate(d, CFG.TZ, 'dd/MM/yyyy HH:mm'); }
+
+/**
+ * CHẠY 1 LẦN cho bản Phân quyền (chọn hàm setupV4 → ▶ Chạy). Chạy lại vẫn an toàn.
+ *  - Tạo tab ẩn WEB_PHAN_QUYEN (danh sách tài khoản, mã truy cập riêng, vai trò)
+ *  - DV_MUA_NGOAI: đổi tên cột "Người xử lý" → "Người thực hiện", "Người duyệt" → "Người duyệt yêu cầu"
+ */
+function setupV4() {
+  var out = [], ss = ss_();
+  usersSheet_(); cache_().remove('USERS');
+  out.push(USERS_SHEET + ': sẵn sàng (tab ẩn – quản lý trên web, mục Hệ thống → Phân quyền truy cập)');
+  var dv = ss.getSheetByName('DV_MUA_NGOAI');
+  if (!dv) { createAutoSheet_('DV_MUA_NGOAI'); out.push('DV_MUA_NGOAI: đã tạo'); }
+  else {
+    [['J4', 'Người xử lý', 'Người thực hiện'], ['K4', 'Người duyệt', 'Người duyệt yêu cầu']].forEach(function (x) {
+      var c = dv.getRange(x[0]);
+      if (String(c.getValue()).trim() === x[1]) { c.setValue(x[2]); out.push('DV_MUA_NGOAI!' + x[0] + ': đổi thành "' + x[2] + '"'); }
+    });
+    dv.getRange('A2').setValue(AUTO_SHEETS.DV_MUA_NGOAI.sub);
+  }
+  bumpRev_('*');
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
