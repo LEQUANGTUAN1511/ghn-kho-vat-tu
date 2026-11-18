@@ -2500,7 +2500,8 @@
             <div class="setting-row"><label>Vai trò</label><div><span class="role-badge ${me.role}">${esc(ROLE_LABEL[me.role])}</span> ${me.approver ? '<span class="chip green">Người duyệt yêu cầu</span>' : ''}</div></div>
             <div class="setting-row"><label>Đăng nhập bằng</label><div>${me.master ? 'Mã chung (Quản trị)' : 'Mã truy cập cá nhân'}</div></div>`
             : `<p class="muted" style="margin:0">${state.apiUrl ? 'Chưa nhận được thông tin quyền từ Apps Script. Nếu đã đăng nhập mà vẫn thấy dòng này: Apps Script đang chạy bản cũ – vào Triển khai → Quản lý tùy chọn triển khai → ✏️ → Phiên bản: Mới → Triển khai.' : 'Chưa kết nối Google Sheet.'}</p>`}
-          <div class="sec-actions"><button class="btn" id="pSwitch">⇄ Đổi tài khoản</button></div>
+          <div class="sec-actions"><button class="btn" id="pSwitch">⇄ Đổi tài khoản</button><button class="btn" id="pCheck">🔎 Kiểm tra phiên bản Apps Script</button></div>
+          <div id="pCheckOut" class="note-line" style="margin-top:8px"></div>
         </div></div>
         <div class="card"><div class="card-h"><h3>Quyền của từng vai trò</h3></div>
           <div class="tbl-wrap" style="max-height:none"><table class="tbl perm-matrix"><thead><tr><th>Quyền</th><th>Người xem</th><th>Người chỉnh sửa</th><th>Người duyệt yêu cầu*</th><th>Quản trị</th></tr></thead><tbody>
@@ -2513,9 +2514,30 @@
         <div class="right">${isAdmin() ? '<button class="btn primary" id="pAdd">＋ Thêm tài khoản</button>' : ''}</div></div>
         <div id="pUsers">${isAdmin() ? '<div class="empty">Đang tải danh sách…</div>' : '<div class="empty">Chỉ Quản trị xem và chỉnh sửa được danh sách tài khoản.</div>'}</div></div>`;
     $('#pSwitch').onclick = () => { state.authFail = true; showLogin(true, 'Nhập mã truy cập của tài khoản khác.'); };
+    $('#pCheck').onclick = checkServerVersion;
+    if (!me && state.apiUrl) checkServerVersion();
     if (!isAdmin()) return;
     $('#pAdd').onclick = () => openUserModal(null);
     loadUsers();
+  }
+
+  /** Hỏi Apps Script đang chạy phiên bản nào (không cần mã truy cập) + cho biết web đang gọi URL nào */
+  async function checkServerVersion() {
+    const out = $('#pCheckOut'); if (!out) return;
+    const id = (String(state.apiUrl).match(/\/s\/([^/]+)\/exec/) || [])[1] || state.apiUrl;
+    const shortId = id.length > 20 ? id.slice(0, 10) + '…' + id.slice(-10) : id;
+    out.innerHTML = 'Đang kiểm tra…';
+    let ver = null;
+    try {
+      const r = await fetch(state.apiUrl + (state.apiUrl.includes('?') ? '&' : '?') + 'action=version&t=' + Date.now(), { redirect: 'follow' });
+      const j = await r.json();
+      if (j && j.ok && j.server) ver = j.server;
+    } catch (e) { out.innerHTML = `<b class="warn-text">Không gọi được Apps Script: ${esc(e.message)}</b>`; return; }
+    out.innerHTML = ver
+      ? `✓ Apps Script đang chạy bản <b>${esc(ver)}</b> (mới). Mã triển khai web đang dùng: <span class="code-inline">${esc(shortId)}</span>. Nếu vẫn chưa thấy vai trò, bấm ⟳ hoặc đăng nhập lại.`
+      : `<b class="warn-text">✗ Apps Script đang chạy bản CŨ.</b> Web đang gọi bản triển khai có mã <span class="code-inline">${esc(shortId)}</span>.<br>
+         Mở Apps Script → <b>Triển khai → Quản lý tùy chọn triển khai</b>: chọn đúng dòng có mã trên (cuối URL), bấm ✏️ → <b>Phiên bản: Phiên bản mới</b> → Triển khai.
+         Nếu không thấy mã này trong danh sách, bạn đang mở nhầm dự án Apps Script – hãy mở Apps Script từ chính Google Sheet (Tiện ích mở rộng → Apps Script).`;
   }
 
   async function loadUsers() {
