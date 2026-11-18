@@ -96,7 +96,9 @@ window.CAL_DEF = {
 };
 
 /* Các tab hệ thống do web tạo – không hiện trong menu */
-window.HIDDEN_SHEETS = ['WEB_HINH_ANH', 'WEB_NHAT_KY'];
+window.HIDDEN_SHEETS = ['WEB_HINH_ANH', 'WEB_NHAT_KY', 'WEB_PHAN_QUYEN'];
+/* Tab chứa mã truy cập: web luôn bỏ khỏi dữ liệu (kể cả khi Apps Script bản cũ lỡ gửi về) */
+window.PRIVATE_SHEETS = ['WEB_PHAN_QUYEN'];
 
 /* Tab do web tạo trên Sheet (Apps Script AUTO_SHEETS / setupV2). Khi Sheet chưa có tab,
  * web dựng bản trống theo khai báo này để vẫn xem / nhập được (tự đồng bộ khi tab được tạo).

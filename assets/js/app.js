@@ -296,8 +296,21 @@
       throw new Error(j.error || 'Lỗi không xác định');
     }
     if (j.me) setMe(j.me);
+    stripPrivate(j);
     return j;
   }
+  /** Bỏ tab chứa mã truy cập khỏi dữ liệu nhận về / bộ nhớ đệm */
+  function stripPrivate(d) {
+    if (!d) return d;
+    (window.PRIVATE_SHEETS || []).forEach(n => {
+      if (d.sheets) delete d.sheets[n];
+      if (Array.isArray(d.order)) d.order = d.order.filter(x => x !== n);
+    });
+    return d;
+  }
+  /** Apps Script đang chạy bản cũ (chưa "Triển khai phiên bản mới") */
+  const isOldServer = e => /Hành động không hợp lệ/i.test(String(e && e.message));
+  const OLD_SERVER_MSG = 'Apps Script trên web đang chạy bản CŨ. Vào Apps Script → Triển khai → Quản lý tùy chọn triển khai → ✏️ → Phiên bản: Mới → Triển khai, rồi tải lại trang.';
 
   /* ------------------------------------------------------------------ quyền truy cập
    * me = { name, role: viewer | editor | admin, approver, master } do Apps Script trả về.
@@ -2486,7 +2499,7 @@
           ${me ? `<div class="setting-row"><label>Họ tên</label><div><b>${esc(me.name || state.user || '—')}</b></div></div>
             <div class="setting-row"><label>Vai trò</label><div><span class="role-badge ${me.role}">${esc(ROLE_LABEL[me.role])}</span> ${me.approver ? '<span class="chip green">Người duyệt yêu cầu</span>' : ''}</div></div>
             <div class="setting-row"><label>Đăng nhập bằng</label><div>${me.master ? 'Mã chung (Quản trị)' : 'Mã truy cập cá nhân'}</div></div>`
-            : `<p class="muted" style="margin:0">${state.apiUrl ? 'Chưa nhận được thông tin quyền từ Apps Script. Nếu đã đăng nhập mà vẫn thấy dòng này, cần dán Code.gs mới và chạy setupV4 (xem README).' : 'Chưa kết nối Google Sheet.'}</p>`}
+            : `<p class="muted" style="margin:0">${state.apiUrl ? 'Chưa nhận được thông tin quyền từ Apps Script. Nếu đã đăng nhập mà vẫn thấy dòng này: Apps Script đang chạy bản cũ – vào Triển khai → Quản lý tùy chọn triển khai → ✏️ → Phiên bản: Mới → Triển khai.' : 'Chưa kết nối Google Sheet.'}</p>`}
           <div class="sec-actions"><button class="btn" id="pSwitch">⇄ Đổi tài khoản</button></div>
         </div></div>
         <div class="card"><div class="card-h"><h3>Quyền của từng vai trò</h3></div>
@@ -2512,7 +2525,7 @@
       const j = await api('users');
       state.users = j.users || [];
       drawUsers();
-    } catch (e) { host.innerHTML = `<div class="empty">Không tải được danh sách: ${esc(e.message)}<br><small>Nếu báo “Hành động không hợp lệ”, cần dán Code.gs mới và chạy setupV4.</small></div>`; }
+    } catch (e) { host.innerHTML = isOldServer(e) ? `<div class="empty"><b class="warn-text">${esc(OLD_SERVER_MSG)}</b></div>` : `<div class="empty">Không tải được danh sách: ${esc(e.message)}</div>`; }
   }
 
   function drawUsers() {
@@ -2545,7 +2558,7 @@
       const u = userOf(b);
       if (!confirm(`Xóa tài khoản “${u.name}”?\nNgười này sẽ không đăng nhập được bằng mã cũ. Nên dùng 🔒 Khóa nếu chỉ tạm ngưng.`)) return;
       try { await api('deleteUser', { row: u.row, name: u.name }); toast('Đã xóa tài khoản ' + u.name); loadUsers(); }
-      catch (e) { toast('Không xóa được: ' + e.message, 'err'); }
+      catch (e) { toast(isOldServer(e) ? OLD_SERVER_MSG : 'Không xóa được: ' + e.message, 'err'); }
     });
   }
 
@@ -2555,7 +2568,7 @@
       toast(u.row ? 'Đã cập nhật tài khoản ' + u.name : 'Đã tạo tài khoản ' + u.name);
       await loadUsers();
       return j;
-    } catch (e) { toast('Không lưu được: ' + e.message, 'err'); return null; }
+    } catch (e) { toast(isOldServer(e) ? OLD_SERVER_MSG : 'Không lưu được: ' + e.message, 'err'); return null; }
   }
 
   function genPin() { const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; let s = ''; const a = new Uint32Array(8); crypto.getRandomValues(a); a.forEach(n => { s += abc[n % abc.length]; }); return s; }
@@ -2662,7 +2675,7 @@
 
     // Dữ liệu: bộ nhớ đệm (nếu có) → bản chụp → Google Sheet trực tiếp
     const cache = state.apiUrl ? LS.get('cache', null) : null;
-    if (cache && cache.data) { state.data = cache.data; state.images = cache.images || []; state.rev = cache.rev; state.mode = 'cache'; }
+    if (cache && cache.data) { state.data = stripPrivate(cache.data); state.images = cache.images || []; state.rev = cache.rev; state.mode = 'cache'; }
     else { state.data = JSON.parse(JSON.stringify(window.SNAPSHOT)); state.mode = 'snapshot'; }
     ensureLocalSheets();
     state.queue.forEach(applyLocal);
