@@ -116,6 +116,32 @@ git add . && git commit -m "Cập nhật" && git push
 
 ---
 
+## Bản cập nhật V5 (20/11/2026)
+
+**Cách cập nhật (làm 1 lần):**
+1. Dán lại `Code.gs` → 💾 Lưu.
+2. Chọn hàm **`setupV5`** → ▶ Chạy → xem *Nhật ký thực thi*. Chạy lại nhiều lần vẫn an toàn.
+3. **Triển khai → Quản lý tùy chọn triển khai → ✏️ → Phiên bản mới**.
+4. Tải lên GitHub: `assets/js/app.js`, `assets/js/config.js`, `assets/css/style.css`, `apps-script/Code.gs`, `README.md`.
+5. Kiểm tra: trang *Phân quyền truy cập* → 🔎 *Kiểm tra phiên bản* phải báo **V5**.
+
+`setupV5` làm các việc sau:
+- **Sửa ô #ERROR!** ở Tồn kho NVL (Đơn giá, Giá trị tồn), Cấp phát PDA (Tên thiết bị), Sổ / Tồn kho CCDC, Dịch vụ mua ngoài. Nguyên nhân: công thức bản trước viết dạng R1C1, nay đã đổi sang dạng A1 thông thường.
+- **Sổ Nhập – Xuất NVL / CCDC:** cột Đơn giá thành công thức, luôn lấy theo danh mục. Cột "Bộ phận / kho đối ứng" thành dropdown thêm / bớt được trên web.
+- **Thống kê PDA:** cột A (STT) đổi thành **Số máy PDA**. Máy chưa có số được điền sẵn theo kho (PDA-20-01…, PDA-ST-01…, PDA-TK-01…), **cần sửa lại theo nhãn thật dán trên máy** nếu khác.
+- **Cấp phát PDA:** bỏ giờ cấp / giờ trả, thêm *Tình trạng khi cấp*, MSNV đứng trước Người nhận. Dữ liệu cũ được chuyển sang; bản cũ giữ ở tab ẩn `CAP_PHAT_PDA_CU`.
+- **Tạo tab `CAP_PHAT_BHLD`:** theo dõi nón bảo hộ & áo phản quang.
+
+**Thay đổi trên web:**
+
+| Mục | Nội dung |
+|---|---|
+| Menu | Theo dõi từng kho → Dành cho Quản lý → Danh mục (GĐ1) → Nhập – Xuất – Tồn (GĐ2) → CCDC – Tuổi thọ (GĐ3) → **Công việc hàng ngày (GĐ4)** → Thiết bị (GĐ5) → Định mức & Kế hoạch (GĐ6) → Event (GĐ7) → Hệ thống. Bỏ *Danh mục Kho* và nhóm *Khác*; *Hướng dẫn sử dụng* chuyển vào Danh mục và được viết lại. |
+| Tồn kho NVL / CCDC | **Tồn đầu** (chốt 7:00) · **Nhập trong tháng** (+ nhập hôm nay) · **Xuất hôm nay** · **Xuất trong tháng** · **Tồn cuối** = Tồn đầu + Nhập hôm nay − Xuất hôm nay · Tồn min · Trạng thái · Giá trị tồn. Có tab lọc Cần đặt / Có xuất hôm nay / Hết hàng; bảng gốc (nhập Tồn đầu kỳ) mở bằng "⚙ Bảng gốc". |
+| Sổ Nhập – Xuất | Bỏ Số phiếu và ô Đơn giá khỏi form. Ngày tự điền hôm nay. Nhập MSNV thì tên người nhận tự điền và ngược lại; người mới được ghi nhớ sau lần lưu đầu. |
+| Công việc hàng ngày | Lịch CV 3 kho + **Nón bảo hộ & áo phản quang** (cấp – nhận lại, cảnh báo chưa trả). |
+| Thiết bị | Thống kê PDA hiện **Số máy PDA** thay cột #. Cấp phát nhập số máy hoặc IMEI. Thêm trang **Báo cáo PDA** (theo kho, nút *Sao chép báo cáo* để gửi nhóm). |
+
 ## Bản cập nhật V2: Đơn giá – Thành tiền · CCDC · Cấp phát PDA
 
 ### Cách cập nhật (làm 1 lần)
