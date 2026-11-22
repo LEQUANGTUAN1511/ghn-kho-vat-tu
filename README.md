@@ -116,6 +116,24 @@ git add . && git commit -m "Cập nhật" && git push
 
 ---
 
+## Bản cập nhật V6 (22/11/2026)
+
+**Cách cập nhật (làm 1 lần):**
+1. Dán lại `Code.gs` → 💾 Lưu.
+2. Chọn hàm **`setupV6`** → ▶ Chạy → xem *Nhật ký thực thi*. Dòng đầu cho biết Sheet dùng dấu `,` hay `;`.
+3. **Triển khai → Quản lý tùy chọn triển khai → ✏️ → Phiên bản mới**.
+4. Tải lên GitHub: `assets/js/app.js`, `assets/js/config.js`, `assets/css/style.css`, `apps-script/Code.gs`, `README.md`.
+5. Kiểm tra: trang *Phân quyền truy cập* → 🔎 *Kiểm tra phiên bản* phải báo **V6**.
+
+**Nội dung:**
+
+| Mục | Thay đổi |
+|---|---|
+| **Sửa #ERROR!** | Nguyên nhân thật: Sheet đặt vùng Việt Nam nên công thức phải ngăn cách bằng `;`. Apps Script giờ tự thử dấu ngăn cách của Sheet rồi ghi lại mọi công thức do web tạo: Tồn kho NVL, Sổ / Tồn kho CCDC, Cấp phát PDA, Dịch vụ mua ngoài. Web cũng không còn hiện các dòng trống chỉ chứa lỗi công thức. |
+| **Thống kê PDA** | Thêm cột K **Dự kiến sửa xong**. Tình trạng thêm **CHỜ THANH LÝ / ĐÃ THANH LÝ** (giữ các lựa chọn cũ). |
+| **Báo cáo PDA** | Mỗi máy hư / đang sửa hiện **ngày hư, ngày gửi sửa, dự kiến sửa xong** (trễ thì tô đỏ, có đếm ở ô chỉ số). Thêm **Danh mục thanh lý PDA**: Máy hư → *Đề xuất thanh lý* → *Đã thanh lý* (có *Hủy đề xuất*), có nút *Sao chép danh mục*. Máy đã thanh lý không tính vào tổng. |
+| **Nón bảo hộ & áo phản quang** | Đổi sang dạng **danh sách** (tab `DS_BHLD`): mỗi chiếc 1 dòng, mã tự đánh khi thêm hàng loạt (NON-20-001, AO-ST-001…). Nhân viên nhận → **chỉ cần gõ tên** (hoặc MSNV) vào ô *Người đang giữ*; MSNV và ngày nhận tự điền. Thu hồi = nút *Thu hồi*. Đổi tình trạng Tốt / Cũ / Hư / Mất ngay trên dòng. Tab cấp phát theo lượt cũ: xóa nếu chưa có dữ liệu, nếu có thì giữ ở tab ẩn `CAP_PHAT_BHLD_CU`. |
+
 ## Bản cập nhật V5 (20/11/2026)
 
 **Cách cập nhật (làm 1 lần):**

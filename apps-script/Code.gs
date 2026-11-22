@@ -44,10 +44,10 @@ function doPost(e) {
 }
 
 /* Thao tác ghi (người xem bị chặn) và thao tác chỉ dành cho Quản trị */
-var WRITE_ACTIONS = ['update', 'append', 'clearRow', 'addColumn', 'upload', 'deleteImage', 'setList', 'backup'];
+var WRITE_ACTIONS = ['update', 'append', 'appendMany', 'clearRow', 'addColumn', 'upload', 'deleteImage', 'setList', 'backup'];
 var ADMIN_ACTIONS = ['users', 'saveUser', 'deleteUser'];
 
-var SERVER_VERSION = 'V5';   // web dùng để kiểm tra đã "Triển khai phiên bản mới" chưa
+var SERVER_VERSION = 'V6';   // web dùng để kiểm tra đã "Triển khai phiên bản mới" chưa
 
 function handle_(action, p) {
   try {
@@ -76,6 +76,7 @@ function handle_(action, p) {
       case 'all': res = getAll_(p.sheets, p.nodv === '1' || p.nodv === 1 || p.nodv === true); break;
       case 'update': res = withLock_(function () { return update_(p); }, p.sheet); break;
       case 'append': res = withLock_(function () { return append_(p); }, p.sheet); break;
+      case 'appendMany': res = withLock_(function () { return appendMany_(p); }, p.sheet); break;
       case 'clearRow': res = withLock_(function () { return clearRow_(p); }, p.sheet); break;
       case 'addColumn': res = withLock_(function () { return addColumn_(p); }, p.sheet); break;
       case 'upload': res = withLock_(function () { return upload_(p); }, CFG.IMG_SHEET); break;
@@ -542,18 +543,16 @@ var AUTO_SHEETS = {
     widths: { D: 160, E: 150, G: 170, H: 140, K: 220 }
   },
 
-  // Công việc hằng ngày · cấp phát nón bảo hộ + áo phản quang (cùng cách theo dõi như PDA)
-  CAP_PHAT_BHLD: {
-    after: 'LICH_CV_ST', rows: 2000,
-    title: 'THEO DÕI NÓN BẢO HỘ & ÁO PHẢN QUANG',
-    sub: 'Mỗi lượt cấp = 1 dòng: ngày, ca, kho, loại, mã số (nếu có), MSNV, người nhận, bộ phận, tình trạng khi cấp. Khi thu lại ghi "Tình trạng khi trả".',
-    headers: ['Ngày', 'Ca', 'Kho', 'Loại', 'Mã số', 'MSNV', 'Người nhận', 'Bộ phận',
-      'Tình trạng khi cấp', 'Tình trạng khi trả', 'Ghi chú', 'Trạng thái'],
-    lists: { B: CA_LIST, C: KHO_LIST, D: ['Nón bảo hộ', 'Áo phản quang', 'Nón + Áo'], H: BO_PHAN_DEFAULT,
-      I: ['Bình thường', 'Cũ / bẩn', 'Hư nhẹ'], J: ['Bình thường', 'Bẩn', 'Rách / hư', 'Mất', 'Khác'] },
-    dates: ['A'], texts: ['E', 'F'],
-    formulas: { L: LOAN_STATUS },
-    widths: { D: 130, G: 170, H: 140, K: 220 }
+  // Công việc hằng ngày · DANH SÁCH nón bảo hộ & áo phản quang: mỗi chiếc 1 dòng,
+  // nhân viên nào nhận thì chỉ cần điền tên vào "Người đang giữ" (thu hồi = xóa tên). Mọi thay đổi có trong Nhật ký.
+  DS_BHLD: {
+    after: 'LICH_CV_ST', rows: 1000,
+    title: 'DANH SÁCH NÓN BẢO HỘ & ÁO PHẢN QUANG',
+    sub: 'Mỗi chiếc nón / áo 1 dòng. Nhân viên nhận → điền tên vào "Người đang giữ" (MSNV, ngày nhận tự điền trên web). Thu hồi về kho → xóa tên. Lịch sử giao – nhận xem ở Nhật ký thay đổi.',
+    headers: ['Mã số', 'Loại', 'Kho', 'Người đang giữ', 'MSNV', 'Bộ phận', 'Ngày nhận', 'Tình trạng', 'Ghi chú'],
+    lists: { B: ['Nón bảo hộ', 'Áo phản quang'], C: KHO_LIST, F: BO_PHAN_DEFAULT, H: ['Tốt', 'Cũ', 'Hư', 'Mất'] },
+    dates: ['G'], texts: ['A', 'E'],
+    widths: { A: 120, B: 130, D: 190, F: 140, I: 240 }
   }
 };
 
@@ -562,9 +561,33 @@ function ensureRows_(sh, n) { if (sh.getMaxRows() < n) sh.insertRowsAfter(sh.get
 /** Ghi công thức A1 cho cột L từ dòng `first` tới `last` ({r} = số dòng) */
 function fillFormulas_(sh, L, first, last, tpl) {
   if (last < first) return;
-  var arr = [];
-  for (var r = first; r <= last; r++) arr.push([tpl.replace(/\{r\}/g, r)]);
+  var arr = [], t = localizeF_(tpl);
+  for (var r = first; r <= last; r++) arr.push([t.replace(/\{r\}/g, r)]);
   sh.getRange(L + first + ':' + L + last).setFormulas(arr).setFontColor('#5d706e');
+}
+
+/* ---------- Dấu ngăn cách đối số trong công thức ----------
+ * Sheet đặt vùng Việt Nam (số thập phân dùng dấu phẩy) thì công thức phải ngăn cách bằng ";" –
+ * ghi bằng "," sẽ ra #ERROR!. Thử trực tiếp 1 lần trên Sheet rồi ghi nhớ. */
+function formulaSep_() {
+  var p = PropertiesService.getScriptProperties(), s = p.getProperty('FSEP');
+  if (s === ',' || s === ';') return s;
+  var ss = ss_(), tmp = ss.insertSheet('_TMP_KIEM_TRA_' + Date.now());
+  try {
+    var c = tmp.getRange('A1');
+    c.setFormula('=IF(1=1,7,0)'); SpreadsheetApp.flush();
+    if (Number(c.getValue()) === 7) s = ',';
+    else { c.setFormula('=IF(1=1;7;0)'); SpreadsheetApp.flush(); s = Number(c.getValue()) === 7 ? ';' : ','; }
+  } finally { ss.deleteSheet(tmp); }
+  p.setProperty('FSEP', s);
+  return s;
+}
+/** Đổi "," → ";" (ngoài chuỗi trong ngoặc kép) nếu Sheet dùng dấu ";" */
+function localizeF_(f) {
+  if (formulaSep_() === ',') return f;
+  var out = '', q = false;
+  for (var i = 0; i < f.length; i++) { var ch = f.charAt(i); if (ch === '"') q = !q; out += (!q && ch === ',') ? ';' : ch; }
+  return out;
 }
 
 function listRule_(vals) { return SpreadsheetApp.newDataValidation().requireValueInList(vals, true).setAllowInvalid(true).build(); }
@@ -590,7 +613,7 @@ function createAutoSheet_(name) {
 function applyAutoRules_(sh, d, last) {
   Object.keys(d.groupRow || {}).forEach(function (L) {
     var c = sh.getRange(L + '3'), v = d.groupRow[L];
-    if (v.charAt(0) === '=') c.setFormula(v); else c.setValue(v);
+    if (v.charAt(0) === '=') c.setFormula(localizeF_(v)); else c.setValue(v);
     c.setFontWeight('bold').setFontColor('#0e8578');
   });
   Object.keys(d.lists || {}).forEach(function (L) { sh.getRange(L + '5:' + L + last).setDataValidation(listRule_(d.lists[L])); });
@@ -721,8 +744,7 @@ function setupV5() {
   // 5. Cấp phát PDA (cấu trúc mới)
   out.push(migrateLoanSheet_('CAP_PHAT_PDA', bp));
   // 6. Nón bảo hộ & áo phản quang
-  if (ss.getSheetByName('CAP_PHAT_BHLD')) out.push('CAP_PHAT_BHLD: đã có');
-  else { var d6 = AUTO_SHEETS.CAP_PHAT_BHLD; d6.lists.H = bp; createAutoSheet_('CAP_PHAT_BHLD'); out.push('CAP_PHAT_BHLD: đã tạo'); }
+  out.push(setupBhld_(bp));
   out.push(syncPdaSummary_());
   try { cache_().remove('DEPS'); } catch (e) {}
   bumpRev_('*');
@@ -758,7 +780,7 @@ function migrateLoanSheet_(name, bp) {
   if (!sh) { createAutoSheet_(name); return name + ': đã tạo'; }
   var head = sh.getRange(4, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0].map(function (x) { return String(x).trim(); });
   if (head.indexOf('Giờ cấp') < 0) {   // đã là cấu trúc mới → chỉ ghi lại công thức / dropdown
-    applyAutoRules_(sh, d, 4 + d.rows);
+    reapplyAuto_(sh, name);   // giữ lựa chọn dropdown đã thêm
     return name + ': đã ghi lại công thức';
   }
   // Cấu trúc cũ: Ngày, Ca, Kho, IMEI, Tên, Người nhận, MSNV, Bộ phận, Giờ cấp, Giờ trả, TT trả, Ghi chú, Trạng thái
@@ -1121,6 +1143,93 @@ function setupV4() {
     });
     dv.getRange('A2').setValue(AUTO_SHEETS.DV_MUA_NGOAI.sub);
   }
+  bumpRev_('*');
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
+
+/** Thêm nhiều dòng trong 1 lần gọi (VD: thêm 30 nón bảo hộ vào danh sách) */
+function appendMany_(p) {
+  var rows = p.rows || [], out = [];
+  if (rows.length > 300) throw new Error('Tối đa 300 dòng mỗi lần');
+  rows.forEach(function (values) {
+    out.push(append_({ sheet: p.sheet, values: values, dataStart: p.dataStart, lastCol: p.lastCol, user: p.user, _me: p._me }).row);
+  });
+  return { ok: true, rows: out };
+}
+
+/** Danh sách lựa chọn hiện có của dropdown ô L5 (để giữ các lựa chọn người dùng đã thêm) */
+function currentList_(sh, L) {
+  try {
+    var dv = sh.getRange(L + '5').getDataValidation();
+    if (dv && dv.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) return dv.getCriteriaValues()[0].map(String);
+  } catch (e) {}
+  return [];
+}
+/** Ghi lại quy tắc / công thức của tab do web tạo, giữ các lựa chọn dropdown đã thêm */
+function reapplyAuto_(sh, name) {
+  var d = AUTO_SHEETS[name], copy = {};
+  Object.keys(d).forEach(function (k) { copy[k] = d[k]; });
+  copy.lists = {};
+  Object.keys(d.lists || {}).forEach(function (L) { copy.lists[L] = mergeList_(currentList_(sh, L), d.lists[L]); });
+  if (sh.getMaxColumns() < d.headers.length) sh.insertColumnsAfter(sh.getMaxColumns(), d.headers.length - sh.getMaxColumns());
+  applyAutoRules_(sh, copy, 4 + (d.rows || 996));
+}
+
+/** Nón / áo: thay tab cấp phát theo lượt (CAP_PHAT_BHLD) bằng danh sách DS_BHLD */
+function setupBhld_(bp) {
+  var ss = ss_(), out = [], old = ss.getSheetByName('CAP_PHAT_BHLD');
+  if (old) {
+    var hasData = old.getLastRow() >= 5 && old.getRange(5, 4, old.getLastRow() - 4, 4).getValues().some(function (r) { return String(r[0]).trim() || String(r[3]).trim(); });
+    if (hasData) { var bk = 'CAP_PHAT_BHLD_CU'; if (ss.getSheetByName(bk)) ss.deleteSheet(ss.getSheetByName(bk)); old.setName(bk); try { old.hideSheet(); } catch (e) {} out.push('CAP_PHAT_BHLD: đổi tên thành tab ẩn ' + bk + ' (có dữ liệu cũ)'); }
+    else { ss.deleteSheet(old); out.push('CAP_PHAT_BHLD: đã xóa (chưa có dữ liệu)'); }
+  }
+  var sh = ss.getSheetByName('DS_BHLD');
+  if (!sh) { var d = AUTO_SHEETS.DS_BHLD; d.lists = JSON.parse(JSON.stringify(d.lists)); if (bp) d.lists.F = bp; createAutoSheet_('DS_BHLD'); out.push('DS_BHLD: đã tạo danh sách nón / áo'); }
+  else { reapplyAuto_(sh, 'DS_BHLD'); out.push('DS_BHLD: đã có'); }
+  return out.join(' · ');
+}
+
+/**
+ * CHẠY 1 LẦN cho bản V6 (chọn setupV6 → ▶ Chạy, rồi Triển khai phiên bản mới). Chạy lại vẫn an toàn.
+ *  1. Tự nhận dấu ngăn cách công thức của Sheet ("," hay ";") rồi ghi lại MỌI công thức do web tạo → hết #ERROR!
+ *  2. THONG_KE_PDA: thêm cột K "Dự kiến sửa xong"; thêm tình trạng CHỜ THANH LÝ / ĐÃ THANH LÝ
+ *  3. Nón bảo hộ & áo phản quang: chuyển sang dạng danh sách (DS_BHLD) – ai nhận chỉ cần điền tên
+ */
+function setupV6() {
+  var ss = ss_(), out = [];
+  PropertiesService.getScriptProperties().deleteProperty('FSEP');
+  out.push('Dấu ngăn cách công thức của Sheet: "' + formulaSep_() + '"');
+  // 1. Ghi lại công thức
+  var nx = ss.getSheetByName('SO_NHAP_XUAT');
+  if (nx) addCols_(nx, NX_PRICE_COLS, Math.max(nx.getMaxRows(), 2504), out);
+  var tk = ss.getSheetByName('TON_KHO');
+  if (tk) addCols_(tk, TK_VALUE_COLS, 154, out);
+  var bp = mergeList_(mergeList_(KHO_LIST, nx ? currentList_(nx, 'I') : []), BO_PHAN_DEFAULT);
+  ['DV_MUA_NGOAI', 'SO_NX_CCDC', 'TON_KHO_CCDC'].forEach(function (n) {
+    var sh = ss.getSheetByName(n);
+    if (!sh) { createAutoSheet_(n); out.push(n + ': đã tạo'); }
+    else { reapplyAuto_(sh, n); out.push(n + ': đã ghi lại công thức'); }
+  });
+  out.push(migrateLoanSheet_('CAP_PHAT_PDA', mergeList_(currentList_(ss.getSheetByName('CAP_PHAT_PDA') || nx, 'H'), bp)));
+  // 2. Thống kê PDA
+  var pd = ss.getSheetByName(PDA_SHEET);
+  if (pd) {
+    var k4 = pd.getRange('K4');
+    if (!String(k4.getValue()).trim()) {
+      pd.getRange('J4').copyTo(k4, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      k4.setValue('Dự kiến sửa xong');
+    }
+    pd.getRange('K5:K204').setNumberFormat('dd/mm/yyyy');
+    var st = mergeList_(currentList_(pd, 'E'), ['TỐT', 'HƯ', 'MỚI HƯ', 'CHỜ SỬA', 'ĐÃ GỬI SỬA', 'LƯU TRỮ', 'CHỜ THANH LÝ', 'ĐÃ THANH LÝ']);
+    pd.getRange('E5:E204').setDataValidation(listRule_(st));
+    out.push('THONG_KE_PDA: cột K "Dự kiến sửa xong", tình trạng thêm CHỜ THANH LÝ / ĐÃ THANH LÝ');
+    out.push(setupPdaCodes_());
+  }
+  // 3. Nón / áo
+  out.push(setupBhld_(bp));
+  out.push(syncPdaSummary_());
+  try { cache_().remove('DEPS'); } catch (e) {}
   bumpRev_('*');
   Logger.log(out.join('\n'));
   return out.join('\n');

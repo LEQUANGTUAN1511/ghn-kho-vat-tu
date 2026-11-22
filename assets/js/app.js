@@ -170,7 +170,8 @@
         const code = /^\d+$/.test(a) ? '' : a;            // cột A cũ là STT (số) → chưa có số máy
         if (!imei && !code) continue;
         out.push({ v: code || imei, code, imei, l: [code ? imei : '', plain(val(n, r, 4)), plain(val(n, r, 2)), plain(val(n, r, 5))].filter(Boolean).join(' · '),
-          name: plain(val(n, r, 4)), kho: plain(val(n, r, 2)), st: plain(val(n, r, 5)), desc: plain(val(n, r, 6)), errAt: toDate(val(n, r, 7), true), r });
+          name: plain(val(n, r, 4)), kho: plain(val(n, r, 2)), st: plain(val(n, r, 5)), desc: plain(val(n, r, 6)), errAt: toDate(val(n, r, 7), true),
+          sentAt: toDate(val(n, r, 9), true), backAt: toDate(val(n, r, 10), true), repairDue: toDate(val(n, r, 11), true), r });
       }
       return out;
     }
@@ -230,7 +231,8 @@
     for (let r = def.dataStart; r <= end; r++) {
       const row = s.v[r - 1] || [];
       if (def.type === 'calendar') { if (row[0] !== '' && row[0] != null) out.push(r); continue; }
-      if (def.cols.some(col => row[col.c - 1] !== '' && row[col.c - 1] != null)) out.push(r);
+      // Bỏ dòng trống chỉ có kết quả lỗi của công thức (#ERROR!, #N/A…) – không phải dữ liệu thật
+      if (def.cols.some(col => { const v = row[col.c - 1]; return v !== '' && v != null && !(typeof v === 'string' && /^#[A-Z/0!?]+!?$/.test(v)); })) out.push(r);
     }
     return out;
   }
@@ -371,16 +373,21 @@
   function applyLocal(op) {
     const p = op.payload, n = p.sheet; if (!sh(n)) return;
     if (op.action === 'update') p.changes.forEach(ch => setLocal(n, ch.row, ch.col, encLocal(ch.value)));
-    else if (op.action === 'append') {
-      const s = sh(n); let target = 0;
-      for (let r = p.dataStart; r <= s.v.length + 1; r++) {
-        let empty = true;
-        for (let c = 1; c <= p.lastCol; c++) { if (!isF(n, r, c) && val(n, r, c) !== '') { empty = false; break; } }
-        if (empty) { target = r; break; }
-      }
-      if (!target) target = s.v.length + 1;
-      p._row = target;
-      Object.keys(p.values).forEach(c => setLocal(n, target, +c, encLocal(p.values[c])));
+    else if (op.action === 'append' || op.action === 'appendMany') {
+      const s = sh(n);
+      const one = values => {
+        let target = 0;
+        for (let r = p.dataStart; r <= s.v.length + 1; r++) {
+          let empty = true;
+          for (let c = 1; c <= p.lastCol; c++) { if (!isF(n, r, c) && val(n, r, c) !== '') { empty = false; break; } }
+          if (empty) { target = r; break; }
+        }
+        if (!target) target = s.v.length + 1;
+        Object.keys(values).forEach(c => setLocal(n, target, +c, encLocal(values[c])));
+        return target;
+      };
+      if (op.action === 'append') p._row = one(p.values);
+      else p._rows = (p.rows || []).map(one);
     } else if (op.action === 'clearRow') {
       for (let c = 1; c <= p.lastCol; c++) if (!isF(n, p.row, c)) setLocal(n, p.row, c, '');
     } else if (op.action === 'addColumn') setLocal(n, p.headerRow, p.col, p.title);
@@ -403,7 +410,7 @@
     while (state.queue.length) {
       const op = state.queue[0];
       try {
-        const { _row, ...payload } = op.payload;
+        const { _row, _rows, ...payload } = op.payload;
         await api(op.action, payload);
         state.queue.shift(); saveQueue(); changed = true; state.online = true;
       } catch (e) {
@@ -870,6 +877,7 @@
     if (sc.type === 'dv') return renderDV(view);
     if (sc.type === 'guide') return renderGuide(view);
     if (sc.type === 'stock' && !viewState(name).raw) return renderStock(view, name);
+    if (sc.type === 'bhld' && !viewState(name).raw) return renderBhld(view, name);
     if (sc.type === 'report') {
       view.innerHTML = `<div class="card"><div class="card-h"><h3>${esc(val(name, 1, 1))}</h3><span class="sub">${esc(desc)}</span></div>${reportTable(name, sc.headerRow)}</div>`;
       return;
@@ -888,7 +896,7 @@
           ${def.type !== 'calendar' ? filterSelects(def, vs) : ''}
           <div class="right">
             ${def.addRow ? `<button class="btn primary need-edit" id="addRow">＋ Thêm dòng</button>` : ''}
-            ${schemaOf(def.name).type === "stock" ? `<button class="btn" id="stockBack">← Báo cáo tồn kho</button>` : ""}
+            ${schemaOf(def.name).type === "stock" ? `<button class="btn" id="stockBack">← Báo cáo tồn kho</button>` : schemaOf(def.name).type === "bhld" ? `<button class="btn" id="stockBack">← Danh sách nón / áo</button>` : ""}
             ${name === 'DM_NVL' || name === 'DM_CCDC' ? `<button class="btn need-edit" id="catMgr" title="Đánh dấu mã đang dùng / ngừng dùng">⚙ Đang dùng / Ngừng dùng</button>` : ''}
             ${def.addCol ? `<button class="btn need-edit" id="addCol" title="Bổ sung hạng mục (cột mới) vào bảng">＋ Hạng mục</button>` : ''}
             <button class="btn" id="csv" title="Xuất bảng đang xem ra Excel (CSV)">⭳ Xuất Excel</button>
@@ -1741,8 +1749,7 @@
   const LC = { date: 1, ca: 2, kho: 3, item: 4, item2: 5, msnv: 6, who: 7, dept: 8, condOut: 9, condIn: 10, note: 11 };
   const PDA_DEV = 'THONG_KE_PDA';
   const LOANS = {
-    PDA: { key: 'PDA', sheet: 'CAP_PHAT_PDA', noun: 'máy', itemLabel: 'Số máy PDA / IMEI', outBtn: '＋ Cấp máy', icon: 'phone', alert: 'PDA' },
-    BHLD: { key: 'BHLD', sheet: 'CAP_PHAT_BHLD', noun: 'bộ', itemLabel: 'Loại', outBtn: '＋ Cấp nón / áo', icon: 'helmet', alert: 'Nón / áo phản quang' }
+    PDA: { key: 'PDA', sheet: 'CAP_PHAT_PDA', noun: 'máy', itemLabel: 'Số máy PDA / IMEI', outBtn: '＋ Cấp máy', icon: 'phone', alert: 'PDA' }
   };
   const loanOfSheet = n => Object.values(LOANS).find(d => d.sheet === n);
   const nowCa = () => { const h = new Date().getHours(); return h >= 6 && h < 14 ? 'Ca 1' : h >= 14 && h < 22 ? 'Ca 2' : 'Ca 3'; };
@@ -1874,41 +1881,49 @@
   }
 
   /* ------------------------------------------------------------------ BÁO CÁO PDA (theo kho, sao chép gửi nhóm)
-   * Lấy từ Thống kê PDA: tổng máy, hoạt động tốt theo model, hư hỏng (kèm mô tả), đang sửa / bảo hành, lưu trữ;
-   * kèm tình hình cấp phát trong ngày. */
+   * Lấy từ Thống kê PDA: tổng máy đang quản lý, hoạt động tốt theo model, hư hỏng (mô tả, ngày hư,
+   * dự kiến sửa xong), chờ sửa / đang sửa, chờ thanh lý; kèm cấp phát trong ngày và danh mục thanh lý. */
   const PDA_GROUPS = [
     ['good', 'Hoạt động tốt', s => /^tốt$/i.test(s)],
     ['bad', 'Hư hỏng', s => /^(hư|mới hư)$/i.test(s)],
     ['wait', 'Chờ sửa', s => /^chờ sửa$/i.test(s)],
     ['fix', 'Đang sửa / bảo hành', s => /gửi sửa|bảo hành|đang sửa/i.test(s)],
+    ['liq', 'Chờ thanh lý', s => /^chờ thanh lý$/i.test(s)],
     ['store', 'Lưu trữ', s => /lưu trữ/i.test(s)]
   ];
+  const isLiquidated = d => /^đã thanh lý$/i.test(d.st);
   function pdaReportData(k) {
-    const devs = codes('PDA').filter(d => !k || d.kho === k);
-    const out = [];
-    (k ? [k] : KHO_CODES).forEach(code => {
+    const devs = codes('PDA').filter(d => (!k || d.kho === k) && !isLiquidated(d));
+    return (k ? [k] : KHO_CODES).map(code => {
       const list = devs.filter(d => d.kho === code);
       const groups = PDA_GROUPS.map(([id, label, test]) => ({ id, label, items: list.filter(d => test(d.st)) }));
       const other = list.filter(d => !PDA_GROUPS.some(g => g[2](d.st)));
       if (other.length) groups.push({ id: 'other', label: 'Chưa ghi tình trạng', items: other });
-      const lc = sh(LOANS.PDA.sheet) ? loanCounts(LOANS.PDA, code) : null;
-      out.push({ kho: code, total: list.length, groups, loans: lc });
+      return { kho: code, total: list.length, groups, loans: sh(LOANS.PDA.sheet) ? loanCounts(LOANS.PDA, code) : null };
     });
-    return out;
   }
   const byModel = items => { const m = {}; items.forEach(d => { const k = d.name || 'Chưa ghi model'; m[k] = (m[k] || 0) + 1; }); return Object.entries(m).sort((a, b) => b[1] - a[1]); };
-  const devLabel = d => d.code || (d.imei ? 'IMEI ' + d.imei.replace(/^\D+/, '') : 'Dòng ' + d.r);
+  const devLabel = d => d.code || (d.imei ? 'IMEI ' + imeiKey(d.imei) : 'Dòng ' + d.r);
+  const ddmm = d => d ? `${pad(d.getDate())}/${pad(d.getMonth() + 1)}` : '';
+  /** Ngày theo dõi sửa chữa của 1 máy: [chữ, quá hạn?] */
+  function devDates(d) {
+    const parts = []; let late = false;
+    if (d.errAt) parts.push('hư ' + ddmm(d.errAt));
+    if (d.sentAt) parts.push('gửi sửa ' + ddmm(d.sentAt));
+    if (d.repairDue) { late = d.repairDue < today0() && !d.backAt; parts.push('dự kiến xong ' + ddmm(d.repairDue) + (late ? ' (trễ)' : '')); }
+    if (d.backAt) parts.push('nhận về ' + ddmm(d.backAt));
+    return [parts.join(' · '), late];
+  }
 
   function pdaReportText(data) {
     const t = new Date(), lines = [`Báo cáo PDA ngày ${pad(t.getDate())}/${pad(t.getMonth() + 1)}/${t.getFullYear()}`];
     data.forEach(k => {
-      lines.push('', khoInfo(k.kho).short === 'HCM20' ? 'HCM20' : khoInfo(k.kho).short);
-      lines.push(` - PDA tổng ${k.total}:`);
+      lines.push('', khoInfo(k.kho).short, ` - PDA tổng ${k.total}:`);
       k.groups.forEach(g => {
         if (!g.items.length) return;
         lines.push(`   + ${g.label}: ${g.items.length}`);
         if (g.id === 'good') byModel(g.items).forEach(([m, n]) => lines.push(`     * ${m} : ${n} PDA`));
-        else g.items.forEach(d => lines.push(`     * ${devLabel(d)}${d.name ? ' (' + d.name + ')' : ''}${d.desc ? ': ' + d.desc : ''}${d.errAt ? ', ' + dmy(isoOf(d.errAt)) : ''}`));
+        else g.items.forEach(d => { const dt = devDates(d)[0]; lines.push(`     * ${devLabel(d)}${d.name ? ' (' + d.name + ')' : ''}${d.desc ? ': ' + d.desc : ''}${dt ? ' [' + dt + ']' : ''}`); });
       });
       if (k.loans) lines.push(` - Cấp phát hôm nay: ${k.loans.today} lượt · đang mượn ${k.loans.open} · quá hạn trả ${k.loans.late}${k.loans.bad ? ' · trả về lỗi ' + k.loans.bad : ''}`);
     });
@@ -1917,36 +1932,215 @@
 
   function renderPdaReport(view) {
     setCrumb('Báo cáo PDA', 'Thiết bị');
-    const k = state.kho === 'ALL' ? null : state.kho, data = pdaReportData(k);
+    const k = state.kho === 'ALL' ? null : state.kho, data = pdaReportData(k), vs = viewState('__pdaRep');
+    vs.liq = vs.liq || 'propose';
     const sum = data.reduce((a, x) => { a.total += x.total; x.groups.forEach(g => { a[g.id] = (a[g.id] || 0) + g.items.length; }); return a; }, { total: 0 });
+    const allDevs = codes('PDA').filter(d => !k || d.kho === k);
+    const liqLists = {
+      propose: allDevs.filter(d => /^(hư|mới hư)$/i.test(d.st)),
+      wait: allDevs.filter(d => /^chờ thanh lý$/i.test(d.st)),
+      done: allDevs.filter(isLiquidated)
+    };
+    const lateRepair = allDevs.filter(d => devDates(d)[1]).length;
+    const devLi = d => { const [dt, late] = devDates(d); return `<li class="dev"><b class="code-inline">${esc(devLabel(d))}</b> <span class="muted">${esc(d.name || 'Chưa ghi model')}</span>${d.desc ? `<div>${esc(d.desc)}</div>` : ''}${dt ? `<div class="dates ${late ? 'late' : ''}">📅 ${esc(dt)}</div>` : ''}</li>`; };
     const card = x => `
       <div class="card"><div class="card-h"><h3><span class="chip" style="background:${khoInfo(x.kho).color};color:#fff;border:0">${esc(x.kho)}</span> ${esc(khoInfo(x.kho).name)}</h3><div class="right"><b>${x.total}</b> <span class="muted">PDA</span></div></div>
         <div class="card-b rep">
           ${x.total ? x.groups.filter(g => g.items.length).map(g => `<div class="rep-g ${g.id}"><div class="rep-h"><span>${esc(g.label)}</span><b>${g.items.length}</b></div>
-            ${g.id === 'good'
-              ? `<ul>${byModel(g.items).map(([m, n]) => `<li><span>${esc(m)}</span><b>${n}</b></li>`).join('')}</ul>`
-              : `<ul>${g.items.map(d => `<li class="dev"><b class="code-inline">${esc(devLabel(d))}</b> <span class="muted">${esc(d.name || 'Chưa ghi model')}</span>${d.desc ? `<div>${esc(d.desc)}</div>` : ''}${d.errAt ? `<div class="muted">Ghi nhận lỗi: ${dmy(isoOf(d.errAt))}</div>` : ''}</li>`).join('')}</ul>`}
+            ${g.id === 'good' ? `<ul>${byModel(g.items).map(([m, n]) => `<li><span>${esc(m)}</span><b>${n}</b></li>`).join('')}</ul>` : `<ul>${g.items.map(devLi).join('')}</ul>`}
           </div>`).join('') : '<div class="empty">Chưa khai báo PDA cho kho này.</div>'}
           ${x.loans ? `<div class="rep-g loans"><div class="rep-h"><span>Cấp phát hôm nay</span><b>${x.loans.today}</b></div><ul>
             <li><span>Đang mượn</span><b>${x.loans.open}</b></li><li><span>Quá hạn trả</span><b class="${x.loans.late ? 'late' : ''}">${x.loans.late}</b></li><li><span>Trả về có lỗi</span><b>${x.loans.bad}</b></li></ul></div>` : ''}
         </div></div>`;
+    const liqTabs = [['propose', 'Máy hư – đề xuất thanh lý'], ['wait', 'Chờ thanh lý'], ['done', 'Đã thanh lý']];
+    const liqRows = liqLists[vs.liq];
     view.innerHTML = `
       <div class="kpis">
-        ${kpi('Tổng PDA', sum.total, k ? khoInfo(k).name : 'Toàn cụm 3 kho', 'blue', '#/sheet/' + PDA_DEV)}
+        ${kpi('Tổng PDA đang quản lý', sum.total, k ? khoInfo(k).name : 'Toàn cụm 3 kho (không gồm máy đã thanh lý)', 'blue', '#/sheet/' + PDA_DEV)}
         ${kpi('Hoạt động tốt', sum.good || 0, sum.total ? Math.round((sum.good || 0) / sum.total * 100) + '% tổng số máy' : '', 'green')}
         ${kpi('Hư hỏng', sum.bad || 0, 'HƯ + MỚI HƯ', sum.bad ? 'red' : 'green')}
-        ${kpi('Chờ sửa / đang sửa', (sum.wait || 0) + (sum.fix || 0), `Chờ sửa ${sum.wait || 0} · Đang sửa / bảo hành ${sum.fix || 0}`, (sum.wait || 0) + (sum.fix || 0) ? 'amber' : '')}
+        ${kpi('Chờ sửa / đang sửa', (sum.wait || 0) + (sum.fix || 0), lateRepair ? `${lateRepair} máy trễ ngày dự kiến sửa xong` : `Chờ sửa ${sum.wait || 0} · Đang sửa ${sum.fix || 0}`, lateRepair ? 'red' : ((sum.wait || 0) + (sum.fix || 0) ? 'amber' : ''))}
+        ${kpi('Thanh lý', liqLists.wait.length, `Chờ thanh lý · đã thanh lý ${liqLists.done.length}`, liqLists.wait.length ? 'amber' : '')}
       </div>
-      <div class="card mt"><div class="card-h"><div><h3>Báo cáo PDA ngày ${dmy(isoOf(new Date()))}</h3><div class="sub" style="margin-top:3px">Số liệu lấy trực tiếp từ Thống kê PDA và Cấp phát PDA. Cập nhật tình trạng máy ở Thống kê PDA trước khi gửi báo cáo.</div></div>
+      <div class="card mt"><div class="card-h"><div><h3>Báo cáo PDA ngày ${dmy(isoOf(new Date()))}</h3><div class="sub" style="margin-top:3px">Số liệu lấy trực tiếp từ Thống kê PDA và Cấp phát PDA. Ngày hư, ngày gửi sửa, <b>dự kiến sửa xong</b> nhập ở Thống kê PDA (các cột ngày). Máy đã thanh lý không tính vào tổng.</div></div>
         <div class="right"><button class="btn primary" id="repCopy">📋 Sao chép báo cáo</button><button class="btn" id="repPrint">⎙ In</button></div></div></div>
-      <div class="grid ${data.length > 1 ? 'g3' : ''} mt rep-grid">${data.map(card).join('')}</div>`;
+      <div class="grid ${data.length > 1 ? 'g3' : ''} mt rep-grid">${data.map(card).join('')}</div>
+      <div class="card mt" id="liqCard"><div class="card-h"><div><h3>Danh mục thanh lý PDA</h3><div class="sub" style="margin-top:3px">Máy hư không sửa được → <b>Đề xuất thanh lý</b> → khi đã bàn giao thanh lý bấm <b>Đã thanh lý</b>. Tình trạng được ghi vào Thống kê PDA.</div></div>
+        <div class="right"><button class="btn" id="liqCopy">📋 Sao chép danh mục</button></div></div>
+        <div class="toolbar"><div class="tabs">${liqTabs.map(t => `<button class="tab ${vs.liq === t[0] ? 'active' : ''}" data-liq="${t[0]}">${t[1]} <span class="tcount">${liqLists[t[0]].length}</span></button>`).join('')}</div></div>
+        ${liqRows.length ? `<div class="tbl-wrap" style="max-height:none"><table class="tbl"><thead><tr><th>Số máy PDA</th><th>Kho</th><th>Thiết bị</th><th>IMEI</th><th>Tình trạng</th><th>Mô tả lỗi</th><th>Ngày hư</th><th></th></tr></thead><tbody>
+          ${liqRows.map(d => `<tr><td class="code">${esc(devLabel(d))}</td><td>${esc(d.kho)}</td><td>${esc(d.name || '—')}</td><td class="code">${esc(imeiKey(d.imei))}</td>
+            <td><span class="chip ${/thanh lý/i.test(d.st) ? (isLiquidated(d) ? '' : 'amber') : 'red'}">${esc(d.st)}</span></td><td class="wrap">${esc(d.desc)}</td><td class="date">${d.errAt ? dmy(isoOf(d.errAt)) : ''}</td>
+            <td class="rowact">${vs.liq === 'propose' ? `<button class="btn sm need-edit" data-liqset="CHỜ THANH LÝ" data-r="${d.r}">→ Đề xuất thanh lý</button>`
+              : vs.liq === 'wait' ? `<button class="btn sm need-edit" data-liqset="ĐÃ THANH LÝ" data-r="${d.r}">✓ Đã thanh lý</button> <button class="btn sm need-edit" data-liqset="HƯ" data-r="${d.r}">↩ Hủy đề xuất</button>` : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : `<div class="empty">${vs.liq === 'propose' ? 'Không có máy hư.' : vs.liq === 'wait' ? 'Chưa có máy nào chờ thanh lý.' : 'Chưa có máy nào đã thanh lý.'}</div>`}
+      </div>`;
     bindGo(view);
-    $('#repCopy').onclick = async () => {
-      const txt = pdaReportText(data);
-      try { await navigator.clipboard.writeText(txt); toast('Đã sao chép báo cáo – dán vào Zalo / email'); }
-      catch (e) { modal(`<h3>Báo cáo PDA</h3><textarea class="dv-explain" style="min-height:320px">${esc(txt)}</textarea><div class="row"><button class="btn primary" type="button" onclick="this.closest('.modal-bg').remove()">Đóng</button></div>`, 'wide'); }
+    $$('[data-liq]', view).forEach(b => b.onclick = () => { vs.liq = b.dataset.liq; renderPdaReport(view); });
+    $$('[data-liqset]', view).forEach(b => b.onclick = () => {
+      const r = +b.dataset.r, st = b.dataset.liqset, d = allDevs.find(x => x.r === r); if (!d) return;
+      const msg = st === 'ĐÃ THANH LÝ' ? `Xác nhận máy ${devLabel(d)} đã được thanh lý?\nMáy sẽ không còn tính vào tổng PDA.` : st === 'CHỜ THANH LÝ' ? `Đề xuất thanh lý máy ${devLabel(d)}?` : `Hủy đề xuất, đưa máy ${devLabel(d)} về tình trạng HƯ?`;
+      if (!confirm(msg)) return;
+      const today = isoOf(new Date()), note = { 'CHỜ THANH LÝ': 'đề xuất thanh lý', 'ĐÃ THANH LÝ': 'đã thanh lý', 'HƯ': 'hủy đề xuất thanh lý' }[st];
+      enqueue('update', { sheet: PDA_DEV, changes: [{ row: r, col: 5, value: st }, { row: r, col: 8, value: today },
+        { row: r, col: 6, value: (d.desc ? d.desc + ' · ' : '') + `${dmy(today)}: ${note}${state.user ? ' (' + state.user + ')' : ''}` }] });
+      toast(`${devLabel(d)}: ${st.toLowerCase()}`);
+      route(true);
+    });
+    const copy = async (txt, okMsg) => {
+      try { await navigator.clipboard.writeText(txt); toast(okMsg); }
+      catch (e) { modal(`<h3>Nội dung</h3><textarea class="dv-explain" style="min-height:320px">${esc(txt)}</textarea><div class="row"><button class="btn primary" type="button" onclick="this.closest('.modal-bg').remove()">Đóng</button></div>`, 'wide'); }
+    };
+    $('#repCopy').onclick = () => copy(pdaReportText(data), 'Đã sao chép báo cáo – dán vào Zalo / email');
+    $('#liqCopy').onclick = () => {
+      const t = new Date(), lbl = { propose: 'Máy hư – đề xuất thanh lý', wait: 'Danh mục PDA chờ thanh lý', done: 'Danh mục PDA đã thanh lý' }[vs.liq];
+      copy([`${lbl} – ngày ${pad(t.getDate())}/${pad(t.getMonth() + 1)}/${t.getFullYear()} (${liqRows.length} máy)`, ...liqRows.map((d, i) => `${i + 1}. ${devLabel(d)} · ${d.kho} · ${d.name || 'Chưa ghi model'} · IMEI ${imeiKey(d.imei)}${d.desc ? ' · ' + d.desc : ''}`)].join('\n'), 'Đã sao chép danh mục');
     };
     $('#repPrint').onclick = () => window.print();
+  }
+
+  /* ------------------------------------------------------------------ DANH SÁCH NÓN BẢO HỘ & ÁO PHẢN QUANG
+   * Mỗi chiếc 1 dòng (DS_BHLD: A Mã số · B Loại · C Kho · D Người đang giữ · E MSNV · F Bộ phận · G Ngày nhận · H Tình trạng · I Ghi chú).
+   * Nhân viên nhận → chỉ cần gõ tên (hoặc MSNV) vào dòng của chiếc đó; MSNV + ngày nhận tự điền. Thu hồi = xóa tên. */
+  const BH = { code: 1, type: 2, kho: 3, who: 4, msnv: 5, dept: 6, recv: 7, cond: 8, note: 9 };
+  const BH_PREFIX = { 'Nón bảo hộ': 'NON', 'Áo phản quang': 'AO' };
+  const khoShort = k => ({ HCM20: '20', ST: 'ST', TK: 'TK' }[k] || k);
+  function bhldList(name, k) {
+    const s = sh(name); if (!s) return [];
+    const out = [];
+    for (let r = 5; r <= s.v.length; r++) {
+      const g = c => plain(val(name, r, c)).trim();
+      const code = g(BH.code), type = g(BH.type); if (!code && !type) continue;
+      const kho = g(BH.kho); if (k && kho !== k) continue;
+      const who = g(BH.who), cond = g(BH.cond) || 'Tốt';
+      out.push({ r, code, type, kho, who, msnv: g(BH.msnv), dept: g(BH.dept), recv: toDate(val(name, r, BH.recv), true), cond, note: g(BH.note),
+        out: !!who, broken: /^(hư|mất)$/i.test(cond) });
+    }
+    return out;
+  }
+
+  function renderBhld(view, name) {
+    const sc = schemaOf(name), vs = viewState(name);
+    setCrumb(sc.title, 'Công việc hàng ngày');
+    vs.bf = vs.bf || 'all'; vs.bt = vs.bt || '';
+    const k = state.kho === 'ALL' ? null : state.kho, all = bhldList(name, k), edit = canEdit();
+    const cnt = t => all.filter(x => !t || x.type === t);
+    const c = { helmet: cnt('Nón bảo hộ').length, vest: cnt('Áo phản quang').length, out: all.filter(x => x.out).length,
+      free: all.filter(x => !x.out && !x.broken).length, broken: all.filter(x => x.broken).length };
+    const tabs = [['all', 'Tất cả', all.length], ['out', 'Đang cấp', c.out], ['free', 'Trong kho', c.free], ['broken', 'Hư / mất', c.broken]];
+    const s = sh(name);
+    view.innerHTML = `
+      <div class="kpis">
+        ${kpi('Nón bảo hộ', c.helmet, `${cnt('Nón bảo hộ').filter(x => x.out).length} đang cấp`, 'blue')}
+        ${kpi('Áo phản quang', c.vest, `${cnt('Áo phản quang').filter(x => x.out).length} đang cấp`, 'blue')}
+        ${kpi('Đang cấp cho nhân viên', c.out, k ? khoInfo(k).name : 'Toàn cụm', 'amber')}
+        ${kpi('Còn trong kho', c.free, 'Sẵn sàng cấp', c.free ? 'green' : 'red')}
+        ${kpi('Hư / mất', c.broken, 'Cần bổ sung', c.broken ? 'red' : 'green')}
+      </div>
+      <div class="card mt">
+        <div class="card-h"><div><h3>Danh sách nón bảo hộ & áo phản quang${k ? ' · ' + esc(k) : ''}</h3>
+          <div class="sub" style="margin-top:3px">Nhân viên nhận → gõ <b>tên</b> (hoặc MSNV) vào ô “Người đang giữ” của chiếc đó, Enter để lưu – MSNV và ngày nhận tự điền. Thu hồi về kho → bấm “Thu hồi”.${s && s.local ? ' <b class="warn-text">Tab chưa có trên Google Sheet – chạy setupV6 trong Apps Script.</b>' : ''}</div></div>
+          <div class="right"><button class="btn primary need-edit" id="bhAdd">＋ Thêm nón / áo</button><button class="btn" id="bhRaw" title="Bảng gốc trên Google Sheet">⚙ Bảng gốc</button><button class="btn" id="bhCsv">⭳ Xuất Excel</button></div></div>
+        <div class="toolbar">
+          <div class="tabs">${tabs.map(t => `<button class="tab ${vs.bf === t[0] ? 'active' : ''}" data-bf="${t[0]}">${t[1]} <span class="tcount">${t[2]}</span></button>`).join('')}</div>
+          <div class="right"><select class="select" id="bhType"><option value="">Nón + áo</option>${['Nón bảo hộ', 'Áo phản quang'].map(t => `<option ${vs.bt === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        </div>
+        <div class="toolbar"><div class="search" style="flex:1"><input class="input" id="bhq" placeholder="Tìm mã số, tên nhân viên, MSNV…" value="${esc(vs.q || '')}"></div></div>
+        <div id="bhBody"></div>
+      </div>`;
+    const dir = peopleDir();
+    const dlist = (id, rows) => { let d = document.getElementById(id); if (!d) { d = document.createElement('datalist'); d.id = id; document.body.appendChild(d); } d.innerHTML = rows.map(o => `<option value="${esc(o[0])}">${esc(o[1] || '')}</option>`).join(''); };
+    dlist('dl-NAME', [...new Set(Object.values(dir.byMsnv))].map(nm => [nm, dir.byName[nm.toLowerCase()]]));
+    dlist('dl-MSNV', Object.keys(dir.byMsnv).map(m => [m, dir.byMsnv[m]]));
+    const draw = () => {
+      const q = (vs.q || '').trim().toLowerCase();
+      const list = all.filter(x => (vs.bf === 'all' || (vs.bf === 'out' && x.out) || (vs.bf === 'free' && !x.out && !x.broken) || (vs.bf === 'broken' && x.broken))
+        && (!vs.bt || x.type === vs.bt) && (!q || `${x.code} ${x.who} ${x.msnv}`.toLowerCase().includes(q)))
+        .sort((a, b) => a.type.localeCompare(b.type) || a.code.localeCompare(b.code, 'vi', { numeric: true }));
+      $('#bhBody').innerHTML = list.length ? `<div class="tbl-wrap"><table class="tbl bhld"><thead><tr><th class="code">Mã số</th><th>Loại</th><th>Kho</th><th>Người đang giữ</th><th>MSNV</th><th>Bộ phận</th><th class="date">Ngày nhận</th><th>Tình trạng</th><th></th></tr></thead><tbody>
+        ${list.map(x => `<tr data-r="${x.r}" class="${x.out ? 'is-out' : ''}">
+          <td class="code">${esc(x.code)}</td><td class="nowrap">${esc(x.type)}</td><td>${esc(x.kho)}</td>
+          <td><input class="input bh-who" value="${esc(x.who)}" list="dl-NAME" placeholder="Gõ tên nhân viên…" ${edit ? '' : 'disabled'}></td>
+          <td><input class="input bh-msnv" value="${esc(x.msnv)}" list="dl-MSNV" placeholder="MSNV" ${edit ? '' : 'disabled'}></td>
+          <td>${esc(x.dept)}</td><td class="date">${x.recv ? dmy(isoOf(x.recv)) : ''}</td>
+          <td><select class="select bh-cond" ${edit ? '' : 'disabled'}>${['Tốt', 'Cũ', 'Hư', 'Mất'].map(o => `<option ${o === x.cond ? 'selected' : ''}>${o}</option>`).join('')}</select></td>
+          <td class="rowact">${x.out ? '<button class="btn sm need-edit" data-back>↩ Thu hồi</button>' : '<span class="chip green">Trong kho</span>'}</td></tr>`).join('')}
+        </tbody></table></div>` : `<div class="empty">${all.length ? 'Không có dòng phù hợp.' : 'Chưa có nón / áo trong danh sách. Bấm “＋ Thêm nón / áo” để tạo danh sách (VD: 30 nón bảo hộ kho HCM20).'}</div>`;
+      $$('#bhBody tr[data-r]').forEach(tr => {
+        const r = +tr.dataset.r, x = all.find(i => i.r === r), whoEl = $('.bh-who', tr), mEl = $('.bh-msnv', tr);
+        const commit = (who, msnv) => {
+          who = who.trim(); msnv = msnv.trim();
+          if (who === x.who && msnv === x.msnv) return;
+          const changes = [{ row: r, col: BH.who, value: who }, { row: r, col: BH.msnv, value: msnv }];
+          if (who && who !== x.who) changes.push({ row: r, col: BH.recv, value: isoOf(new Date()) });
+          if (!who) changes.push({ row: r, col: BH.recv, value: '' }, { row: r, col: BH.dept, value: '' });
+          enqueue('update', { sheet: name, changes });
+          toast(who ? `${x.code} → ${who}${msnv ? ' (' + msnv + ')' : ''}` : `Đã thu hồi ${x.code} về kho`);
+          route(true);
+        };
+        whoEl.addEventListener('change', () => {
+          const m = dir.byName[whoEl.value.trim().toLowerCase()];
+          commit(whoEl.value, whoEl.value.trim() ? (m || (whoEl.value.trim() === x.who ? x.msnv : mEl.value)) : '');
+        });
+        mEl.addEventListener('change', () => {
+          const nm = dir.byMsnv[mEl.value.trim().toUpperCase()];
+          commit(nm || whoEl.value, mEl.value);
+        });
+        [whoEl, mEl].forEach(el => el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); }));
+        $('.bh-cond', tr).addEventListener('change', e => { enqueue('update', { sheet: name, changes: [{ row: r, col: BH.cond, value: e.target.value }] }); toast(`${x.code}: ${e.target.value}`); route(true); });
+        const back = $('[data-back]', tr);
+        if (back) back.onclick = () => { if (confirm(`Thu hồi ${x.code} từ ${x.who} về kho?`)) commit('', ''); };
+      });
+    };
+    draw();
+    $$('[data-bf]', view).forEach(b => b.onclick = () => { vs.bf = b.dataset.bf; renderBhld(view, name); });
+    $('#bhType').onchange = e => { vs.bt = e.target.value; draw(); };
+    $('#bhq').addEventListener('input', debounce(e => { vs.q = e.target.value; draw(); }, 200));
+    $('#bhRaw').onclick = () => { vs.raw = true; route(true); };
+    $('#bhAdd').onclick = () => openBhldAdd(name);
+    $('#bhCsv').onclick = () => {
+      const q = s2 => `"${String(s2).replace(/"/g, '""')}"`, list = all;
+      const lines = [['Mã số', 'Loại', 'Kho', 'Người đang giữ', 'MSNV', 'Bộ phận', 'Ngày nhận', 'Tình trạng', 'Ghi chú'].map(q).join(',')]
+        .concat(list.map(x => [x.code, x.type, x.kho, x.who, x.msnv, x.dept, x.recv ? dmy(isoOf(x.recv)) : '', x.cond, x.note].map(q).join(',')));
+      download(`DS_BHLD${k ? '_' + k : ''}_${isoOf(new Date())}.csv`, '﻿' + lines.join('\r\n'), 'text/csv;charset=utf-8');
+    };
+  }
+
+  /** Thêm nhiều nón / áo vào danh sách, mã số tự đánh: NON-20-001, AO-ST-001… */
+  function openBhldAdd(name) {
+    const k = state.kho === 'ALL' ? 'HCM20' : state.kho;
+    const m = modal(`<h3>＋ Thêm nón / áo vào danh sách</h3>
+      <div class="form" style="margin-top:4px">
+        <div class="field"><label for="baT">Loại</label><select class="select" id="baT"><option>Nón bảo hộ</option><option>Áo phản quang</option></select></div>
+        <div class="field"><label for="baK">Kho</label><select class="select" id="baK">${KHO_CODES.map(c => `<option ${c === k ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+        <div class="field"><label for="baN">Số lượng</label><input class="input" id="baN" type="number" min="1" max="300" value="10"></div>
+        <div class="field"><label for="baS">Mã bắt đầu</label><input class="input" id="baS"></div>
+      </div>
+      <p class="note-line" id="baPrev"></p>
+      <div class="row"><button class="btn" id="baCancel" type="button">Hủy</button><button class="btn primary" id="baOk" type="button">＋ Thêm vào danh sách</button></div>`);
+    const pre = () => `${BH_PREFIX[m.$('#baT').value]}-${khoShort(m.$('#baK').value)}-`;
+    const nextNo = () => { let max = 0; bhldList(name).forEach(x => { if (x.code.startsWith(pre())) max = Math.max(max, Number(x.code.slice(pre().length)) || 0); }); return max + 1; };
+    const prev = () => {
+      const n = Math.max(1, Math.min(300, +m.$('#baN').value || 1)), s0 = Number((String(m.$('#baS').value).match(/(\d+)\s*$/) || [])[1]) || nextNo();
+      m.$('#baPrev').textContent = `Sẽ tạo ${n} dòng: ${pre()}${String(s0).padStart(3, '0')} → ${pre()}${String(s0 + n - 1).padStart(3, '0')}, tình trạng “Tốt”, đang ở kho.`;
+    };
+    const reset = () => { m.$('#baS').value = pre() + String(nextNo()).padStart(3, '0'); prev(); };
+    m.$('#baT').onchange = reset; m.$('#baK').onchange = reset; m.$('#baN').oninput = prev; m.$('#baS').oninput = prev;
+    reset();
+    m.$('#baCancel').onclick = m.close;
+    m.$('#baOk').onclick = () => {
+      const n = Math.max(1, Math.min(300, +m.$('#baN').value || 1)), s0 = Number((String(m.$('#baS').value).match(/(\d+)\s*$/) || [])[1]) || nextNo();
+      const used = new Set(bhldList(name).map(x => x.code.toUpperCase()));
+      const rows = [];
+      for (let i = 0; i < n; i++) {
+        const code = pre() + String(s0 + i).padStart(3, '0');
+        if (used.has(code.toUpperCase())) { toast(`Mã ${code} đã có trong danh sách`, 'warn'); return; }
+        rows.push({ [BH.code]: code, [BH.type]: m.$('#baT').value, [BH.kho]: m.$('#baK').value, [BH.cond]: 'Tốt' });
+      }
+      enqueue('appendMany', { sheet: name, rows, dataStart: 5, lastCol: 9 });
+      toast(`Đã thêm ${n} ${m.$('#baT').value.toLowerCase()} vào danh sách`);
+      m.close(); route(true);
+    };
   }
 
   /* ------------------------------------------------------------------ TASK – Dành cho Quản lý
@@ -2963,9 +3157,9 @@
       <section class="card mt" id="g-hang-ngay"><div class="card-h"><h3>4. Quy trình hằng ngày theo vai trò</h3></div><div class="card-b">
         <div class="grid g3">
           <div class="guide-role"><h4>Thủ kho / nhân viên kho</h4>
-            <p class="lbl">Đầu ca</p>${step(['Chọn đúng kho ở góc trên.', 'Xem trang kho: mã cần đặt, máy / nón áo quá hạn trả.', 'Cấp PDA, nón bảo hộ, áo phản quang cho nhân sự trong ca (nhập MSNV – tên tự điền).'])}
+            <p class="lbl">Đầu ca</p>${step(['Chọn đúng kho ở góc trên.', 'Xem trang kho: mã cần đặt, máy / nón áo quá hạn trả.', 'Cấp PDA cho nhân sự trong ca (nhập MSNV – tên tự điền); giao nón / áo: gõ tên nhân viên vào chiếc được nhận.'])}
             <p class="lbl">Trong ca</p>${step(['Ghi mọi lượt xuất / nhập / điều chuyển ở Sổ Nhập – Xuất NVL hoặc CCDC ngay khi phát sinh.', 'Hư hỏng CCDC: ghi Nhật ký hư hỏng, chụp ảnh đính kèm.'])}
-            <p class="lbl">Cuối ca</p>${step(['Nhận lại PDA / nón / áo, chọn tình trạng khi trả.', 'Kiểm tra danh sách “Đang được mượn” còn trống.', 'Cập nhật Lịch CV của kho (tiến độ sáng / tối).'])}
+            <p class="lbl">Cuối ca</p>${step(['Nhận lại PDA, chọn tình trạng khi trả; nón / áo thu hồi thì bấm “Thu hồi”.', 'Kiểm tra danh sách “Đang được mượn” còn trống.', 'Cập nhật Lịch CV của kho (tiến độ sáng / tối).'])}
           </div>
           <div class="guide-role"><h4>Quản lý</h4>
             <p class="lbl">Đầu ngày (5 phút)</p>${step(['Mở Tổng quan, xử lý các dải cảnh báo.', 'Task: tab “Quá hạn” và “Hôm nay”.', 'Dịch vụ mua ngoài: tab “Chờ duyệt” → Duyệt / Từ chối.'])}
@@ -3002,13 +3196,14 @@
         <h4>Công việc hàng ngày (GĐ4)</h4>
         <dl>
           <dt>Lịch CV từng kho</dt><dd>Chọn tháng / năm; nhập công việc sáng / tối và tiến độ (Hoàn thành / Chưa hoàn thành). Dòng hôm nay được tô vàng.</dd>
-          <dt>Nón bảo hộ & áo phản quang</dt><dd>“＋ Cấp nón / áo”: chọn loại, mã số (nếu có), nhập MSNV → tên tự điền, bộ phận, tình trạng khi cấp. Khi thu lại bấm “↩ Trả” và chọn tình trạng khi trả. Lượt mượn từ hôm trước chưa trả bị cảnh báo đỏ.</dd>
+          <dt>Nón bảo hộ & áo phản quang</dt><dd>Dạng <b>danh sách</b>: mỗi chiếc nón / áo 1 dòng (mã số tự đánh, VD NON-20-001, AO-ST-001 – tạo hàng loạt bằng “＋ Thêm nón / áo”). Nhân viên nhận → gõ <b>tên</b> (hoặc MSNV) vào ô “Người đang giữ” của chiếc đó rồi Enter – MSNV và ngày nhận tự điền. Thu hồi về kho → “↩ Thu hồi”. Hư / mất → đổi Tình trạng. Lịch sử giao – nhận xem ở Nhật ký thay đổi.</dd>
         </dl>
         <h4>Thiết bị (GĐ5)</h4>
         <dl>
-          <dt>Thống kê PDA</dt><dd>Mỗi máy 1 dòng: <b>Số máy PDA</b> (VD: PDA-20-07 – tự gợi ý theo kho, sửa theo nhãn dán trên máy), kho, IMEI, tên thiết bị, tình trạng, mô tả lỗi, các ngày theo dõi sửa chữa.</dd>
+          <dt>Thống kê PDA</dt><dd>Mỗi máy 1 dòng: <b>Số máy PDA</b> (VD: PDA-20-07 – tự gợi ý theo kho, sửa theo nhãn dán trên máy), kho, IMEI, tên thiết bị, tình trạng, mô tả lỗi, <b>ngày ghi nhận lỗi (ngày hư)</b>, ngày gửi đi sửa, ngày nhận sửa chữa, <b>dự kiến sửa xong</b>. Tình trạng gồm cả CHỜ THANH LÝ / ĐÃ THANH LÝ.</dd>
           <dt>Cấp phát PDA hằng ngày</dt><dd>“＋ Cấp máy”: nhập <b>Số máy</b> hoặc quét <b>IMEI</b>, nhập MSNV → tên tự điền, chọn bộ phận, tình trạng khi cấp. Web cảnh báo nếu máy đang có người mượn hoặc không ở tình trạng TỐT. Nhận lại: “↩ Trả” → nếu máy hư, web cập nhật luôn Thống kê PDA thành MỚI HƯ.</dd>
-          <dt>Báo cáo PDA</dt><dd>Tổng hợp từng kho: tổng máy, hoạt động tốt theo model, hư hỏng (kèm mô tả), chờ sửa / đang bảo hành, cấp phát trong ngày. Nút “Sao chép báo cáo” tạo nội dung sẵn để gửi nhóm.</dd>
+          <dt>Báo cáo PDA</dt><dd>Tổng hợp từng kho: tổng máy đang quản lý, hoạt động tốt theo model, hư hỏng (mô tả, ngày hư, dự kiến sửa xong – trễ hạn tô đỏ), chờ sửa / đang bảo hành, chờ thanh lý, cấp phát trong ngày. “Sao chép báo cáo” tạo nội dung sẵn để gửi nhóm.</dd>
+          <dt>Thanh lý PDA</dt><dd>Cuối trang Báo cáo PDA: tab <b>Máy hư – đề xuất thanh lý</b> → bấm “Đề xuất thanh lý” (máy chuyển CHỜ THANH LÝ) → khi đã bàn giao bấm “Đã thanh lý” (máy không còn tính vào tổng). “Sao chép danh mục” để gửi phê duyệt.</dd>
         </dl>
         <h4>Định mức & Kế hoạch (GĐ6) · Event (GĐ7)</h4>
         <dl>

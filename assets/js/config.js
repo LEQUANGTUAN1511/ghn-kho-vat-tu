@@ -84,11 +84,12 @@ window.SCHEMA = {
   LICH_CV_HCM20: { title: 'Lịch CV – HCM20', icon: 'clock', group: 'cv', type: 'calendar', kho: 'HCM20' },
   LICH_CV_ST: { title: 'Lịch CV – Sóng Thần', icon: 'clock', group: 'cv', type: 'calendar', kho: 'ST' },
   LICH_CV_TK: { title: 'Lịch CV – Tân Kim', icon: 'clock', group: 'cv', type: 'calendar', kho: 'TK' },
-  CAP_PHAT_BHLD: { title: 'Nón bảo hộ & áo phản quang', icon: 'helmet', group: 'cv', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', addRow: true, addCol: true, newestFirst: true,
-    people: { msnv: 'F', name: 'G' }, loan: 'BHLD', always: true, after: 'LICH_CV_ST' },
+  // Danh sách nón / áo: mỗi chiếc 1 dòng, nhân viên nhận thì chỉ cần điền tên (MSNV, ngày nhận tự điền)
+  DS_BHLD: { title: 'Nón bảo hộ & áo phản quang', icon: 'helmet', group: 'cv', type: 'bhld', headerRow: 4, dataStart: 5, khoCol: 'C', addRow: true, addCol: true,
+    people: { msnv: 'E', name: 'D' }, always: true, after: 'LICH_CV_ST' },
 
   // Thiết bị (GĐ5)
-  THONG_KE_PDA: { title: 'Thống kê PDA', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, cols: 'A:J', khoCol: 'B', addRow: true, hideRowNo: true,
+  THONG_KE_PDA: { title: 'Thống kê PDA', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, cols: 'A:K', khoCol: 'B', addRow: true, hideRowNo: true,
     seqCode: { col: 'A', khoCol: 'B', prefix: { HCM20: 'PDA-20-', ST: 'PDA-ST-', TK: 'PDA-TK-' }, pad: 2 },
     params: ['M3'], paramKho: 'M3', side: [{ title: 'Bảng tổng hợp PDA (theo ô M3)', from: 'L', to: 'auto', headerRow: 4, rows: 6 }, { title: 'So sánh 3 kho', from: 'M', to: 'P', headerRow: 17, rows: 3 }] },
   CAP_PHAT_PDA: { title: 'Cấp phát PDA hằng ngày', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { D: 'PDA' }, addRow: true, addCol: true, newestFirst: true,
@@ -116,7 +117,7 @@ window.CAL_DEF = {
 };
 
 /* Các tab hệ thống do web tạo – không hiện trong menu */
-window.HIDDEN_SHEETS = ['WEB_HINH_ANH', 'WEB_NHAT_KY', 'WEB_PHAN_QUYEN', 'CAP_PHAT_PDA_CU'];
+window.HIDDEN_SHEETS = ['WEB_HINH_ANH', 'WEB_NHAT_KY', 'WEB_PHAN_QUYEN', 'CAP_PHAT_PDA_CU', 'CAP_PHAT_BHLD_CU', 'CAP_PHAT_BHLD'];
 /* Tab chứa mã truy cập: web luôn bỏ khỏi dữ liệu (kể cả khi Apps Script bản cũ lỡ gửi về) */
 window.PRIVATE_SHEETS = ['WEB_PHAN_QUYEN'];
 
@@ -152,11 +153,10 @@ window.AUTO_LOCAL = {
     f: 'EL',
     dv: { B: ['Ca 1', 'Ca 2', 'Ca 3', 'Hành chính'], C: ['HCM20', 'ST', 'TK'], H: BO_PHAN, I: ['Bình thường', 'Trầy xước', 'Pin yếu', 'Lỗi nhẹ'], J: ['Bình thường', 'Hư màn hình', 'Hư pin / sạc', 'Lỗi phần mềm', 'Rơi vỡ', 'Mất máy', 'Khác'] }
   },
-  CAP_PHAT_BHLD: {
-    title: 'THEO DÕI NÓN BẢO HỘ & ÁO PHẢN QUANG',
-    sub: 'Mỗi lượt cấp = 1 dòng. Nhập MSNV – tên người nhận tự điền. Khi thu lại ghi "Tình trạng khi trả".',
-    headers: ['Ngày', 'Ca', 'Kho', 'Loại', 'Mã số', 'MSNV', 'Người nhận', 'Bộ phận', 'Tình trạng khi cấp', 'Tình trạng khi trả', 'Ghi chú', 'Trạng thái'],
-    f: 'L',
-    dv: { B: ['Ca 1', 'Ca 2', 'Ca 3', 'Hành chính'], C: ['HCM20', 'ST', 'TK'], D: ['Nón bảo hộ', 'Áo phản quang', 'Nón + Áo'], H: BO_PHAN, I: ['Bình thường', 'Cũ / bẩn', 'Hư nhẹ'], J: ['Bình thường', 'Bẩn', 'Rách / hư', 'Mất', 'Khác'] }
+  DS_BHLD: {
+    title: 'DANH SÁCH NÓN BẢO HỘ & ÁO PHẢN QUANG',
+    sub: 'Mỗi chiếc nón / áo 1 dòng. Nhân viên nhận → điền tên vào "Người đang giữ". Thu hồi → xóa tên. Tab được tạo trên Sheet khi chạy setupV6.',
+    headers: ['Mã số', 'Loại', 'Kho', 'Người đang giữ', 'MSNV', 'Bộ phận', 'Ngày nhận', 'Tình trạng', 'Ghi chú'],
+    dv: { B: ['Nón bảo hộ', 'Áo phản quang'], C: ['HCM20', 'ST', 'TK'], F: BO_PHAN, H: ['Tốt', 'Cũ', 'Hư', 'Mất'] }
   }
 };
