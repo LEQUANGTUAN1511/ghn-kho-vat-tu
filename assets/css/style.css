@@ -494,3 +494,29 @@ html.no-approve .need-approve { display: none !important; }
   .content { padding: 0; }
   body { background: #fff; }
 }
+
+/* ---------- V7: Danh sách nhân viên · Cấp phát PDA dạng danh sách · Tần suất ---------- */
+.chip.dg { background: color-mix(in srgb, var(--dg) 14%, transparent); color: var(--dg); border-color: color-mix(in srgb, var(--dg) 35%, transparent); }
+.tbl.staff tr.is-off td { opacity: .55; }
+.tbl.pl td { vertical-align: middle; }
+.tbl.pl th.ck, .tbl.pl td.ck { width: 34px; text-align: center; }
+.tbl.pl tr.grp td { background: var(--bg); font-weight: 600; font-size: 13px; color: var(--muted); letter-spacing: .2px; }
+.tbl.pl .pl-dev b { color: var(--brand, #0e8578); font-variant-numeric: tabular-nums; }
+.tbl.pl .s, .tbl.pl .pl-dev .s { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tbl.pl tr.is-out td { background: color-mix(in srgb, #f59e0b 5%, transparent); }
+.tbl.pl tr.is-late td { background: color-mix(in srgb, #ef4444 7%, transparent); }
+.tbl.pl th.pl-who-h, .tbl.pl td.pl-who { min-width: 260px; }
+.tbl.pl .pl-in { width: 100%; max-width: 320px; }
+.pl-hint { font-size: 12px; margin-top: 4px; line-height: 1.4; }
+.pl-hint:empty { display: none; }
+.pl-hint.ok { color: var(--green, #16a34a); }
+.pl-hint.new { color: #b45309; }
+.pl-hint.bad { color: var(--red, #dc2626); }
+.pl-new { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 6px; margin-top: 6px; max-width: 520px; }
+.pl-new[hidden] { display: none; }
+.pl-new [hidden] { display: none; }
+.freq-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 14px; margin-top: 14px; }
+.freq-grid > .card { margin: 0; }
+.sb-prev { max-height: 260px; overflow: auto; }
+.sb-prev .tbl { font-size: 13px; }
+@media (max-width: 900px) { .freq-grid { grid-template-columns: 1fr; } .pl-new { grid-template-columns: 1fr; } }

@@ -47,7 +47,7 @@ function doPost(e) {
 var WRITE_ACTIONS = ['update', 'append', 'appendMany', 'clearRow', 'addColumn', 'upload', 'deleteImage', 'setList', 'backup'];
 var ADMIN_ACTIONS = ['users', 'saveUser', 'deleteUser'];
 
-var SERVER_VERSION = 'V6';   // web dùng để kiểm tra đã "Triển khai phiên bản mới" chưa
+var SERVER_VERSION = 'V7';   // web dùng để kiểm tra đã "Triển khai phiên bản mới" chưa
 
 function handle_(action, p) {
   try {
@@ -553,6 +553,17 @@ var AUTO_SHEETS = {
     lists: { B: ['Nón bảo hộ', 'Áo phản quang'], C: KHO_LIST, F: BO_PHAN_DEFAULT, H: ['Tốt', 'Cũ', 'Hư', 'Mất'] },
     dates: ['G'], texts: ['A', 'E'],
     widths: { A: 120, B: 130, D: 190, F: 140, I: 240 }
+  },
+
+  // Danh mục · DANH SÁCH NHÂN VIÊN: web tự thêm người mới ở lần cấp phát đầu tiên, các lần sau chỉ cần chọn
+  DS_NHAN_VIEN: {
+    after: 'DM_CCDC', rows: 1500,
+    title: 'DANH SÁCH NHÂN VIÊN – CỤM M12',
+    sub: 'Mỗi nhân viên 1 dòng, MSNV không trùng. Web tự thêm người mới khi cấp PDA lần đầu; các lần sau chỉ cần gõ MSNV / tên để chọn. Bộ phận dùng để thống kê tần suất lấy PDA (Sort, In/out…).',
+    headers: ['Họ tên', 'MSNV', 'Bộ phận', 'Kho', 'SĐT', 'Trạng thái', 'Ngày thêm', 'Ghi chú'],
+    lists: { C: BO_PHAN_DEFAULT, D: KHO_LIST, F: ['Đang làm', 'Nghỉ việc'] },
+    dates: ['G'], texts: ['B', 'E'],
+    widths: { A: 200, B: 100, C: 140, E: 120, H: 240 }
   }
 };
 
@@ -1229,6 +1240,55 @@ function setupV6() {
   // 3. Nón / áo
   out.push(setupBhld_(bp));
   out.push(syncPdaSummary_());
+  try { cache_().remove('DEPS'); } catch (e) {}
+  bumpRev_('*');
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
+
+/** Thêm nhân viên chưa có vào DS_NHAN_VIEN từ các tab đã có MSNV + tên (cấp phát PDA, nón / áo) */
+function seedStaff_(sh) {
+  var ss = ss_(), have = {}, add = [], today = new Date();
+  if (sh.getLastRow() >= 5) sh.getRange(5, 2, sh.getLastRow() - 4, 1).getValues().forEach(function (r) { var m = String(r[0]).trim().toUpperCase(); if (m) have[m] = 1; });
+  // [tab, cột tên, cột MSNV, cột bộ phận, cột kho] (số cột, bắt đầu từ 1)
+  [['CAP_PHAT_PDA', 7, 6, 8, 3], ['DS_BHLD', 4, 5, 6, 3]].forEach(function (src) {
+    var s = ss.getSheetByName(src[0]); if (!s || s.getLastRow() < 5) return;
+    var vals = s.getRange(5, 1, s.getLastRow() - 4, Math.max(src[1], src[2], src[3], src[4])).getValues();
+    for (var i = vals.length - 1; i >= 0; i--) {   // dòng mới nhất trước → lấy bộ phận gần nhất
+      var r = vals[i], nm = String(r[src[1] - 1]).trim(), m = String(r[src[2] - 1]).trim();
+      if (!nm || !m || /dữ liệu cũ/i.test(nm) || have[m.toUpperCase()]) continue;
+      have[m.toUpperCase()] = 1;
+      add.push([nm, m, String(r[src[3] - 1]).trim(), String(r[src[4] - 1]).trim(), '', 'Đang làm', today, 'Tự thêm từ ' + src[0]]);
+    }
+  });
+  if (!add.length) return 0;
+  var first = 5;
+  if (sh.getLastRow() >= 5) {
+    var a = sh.getRange(5, 1, sh.getLastRow() - 4, 2).getValues(), lastUsed = 4;
+    a.forEach(function (r, i) { if (String(r[0]).trim() || String(r[1]).trim()) lastUsed = 5 + i; });
+    first = lastUsed + 1;
+  }
+  ensureRows_(sh, first + add.length);
+  sh.getRange(first, 1, add.length, 8).setValues(add);
+  return add.length;
+}
+
+/**
+ * CHẠY 1 LẦN cho bản V7 (chọn setupV7 → ▶ Chạy, rồi Triển khai phiên bản mới). Chạy lại vẫn an toàn.
+ *  1. Tạo tab DS_NHAN_VIEN (Danh sách nhân viên) – nạp sẵn người đã có trong Cấp phát PDA / nón áo
+ *  2. Ghi lại dropdown Bộ phận của Cấp phát PDA (giữ lựa chọn đã thêm)
+ */
+function setupV7() {
+  var ss = ss_(), out = [];
+  out.push('Dấu ngăn cách công thức của Sheet: "' + formulaSep_() + '"');
+  var cp = ss.getSheetByName('CAP_PHAT_PDA');
+  var bp = mergeList_(cp ? currentList_(cp, 'H') : [], BO_PHAN_DEFAULT);
+  var sh = ss.getSheetByName('DS_NHAN_VIEN');
+  var d = AUTO_SHEETS.DS_NHAN_VIEN; d.lists = JSON.parse(JSON.stringify(d.lists)); d.lists.C = bp;
+  if (!sh) { sh = createAutoSheet_('DS_NHAN_VIEN'); out.push('DS_NHAN_VIEN: đã tạo'); }
+  else { reapplyAuto_(sh, 'DS_NHAN_VIEN'); out.push('DS_NHAN_VIEN: đã có'); }
+  out.push('DS_NHAN_VIEN: nạp sẵn ' + seedStaff_(sh) + ' nhân viên từ dữ liệu cũ');
+  if (cp) { reapplyAuto_(cp, 'CAP_PHAT_PDA'); out.push('CAP_PHAT_PDA: đã ghi lại dropdown / công thức'); }
   try { cache_().remove('DEPS'); } catch (e) {}
   bumpRev_('*');
   Logger.log(out.join('\n'));

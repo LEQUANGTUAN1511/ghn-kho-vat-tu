@@ -55,6 +55,9 @@ window.SCHEMA = {
     autoCode: { col: 'A', from: 'C', prefix: 'NVL', map: { 'Bao bì - đóng gói': 'BB', 'Niêm phong - tem nhãn': 'NP', 'Văn phòng phẩm': 'VP', 'Vệ sinh - hóa chất': 'VS', 'Mực in - vật tư máy in': 'MI' } } },
   DM_CCDC: { title: 'Danh mục CCDC', icon: 'tool', group: 'dm', type: 'table', headerRow: 4, dataStart: 5, addRow: true, addCol: true,
     autoCode: { col: 'A', from: 'C', prefix: 'CCDC', map: { 'Quạt': 'QT', 'Bình chữa cháy': 'PC', 'Thiết bị văn phòng - IT': 'TB', 'Dụng cụ vận hành': 'VH' } } },
+  // Danh sách nhân viên: người mới tự được thêm ở lần cấp PDA đầu tiên, lần sau chỉ cần chọn
+  DS_NHAN_VIEN: { title: 'Danh sách nhân viên', icon: 'users', group: 'dm', type: 'staff', headerRow: 4, dataStart: 5, khoCol: 'D', addRow: true, addCol: true,
+    people: { msnv: 'B', name: 'A' }, always: true, after: 'DM_CCDC' },
 
   // Nhập – Xuất – Tồn (GĐ2). Sổ: bỏ Số phiếu (cột B ẩn trên web), đơn giá tự lấy theo danh mục
   SO_NHAP_XUAT: { title: 'Sổ Nhập – Xuất NVL', icon: 'swap', group: 'nx', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { E: 'NVL' }, addRow: true, addCol: true, newestFirst: true,
@@ -93,7 +96,7 @@ window.SCHEMA = {
     seqCode: { col: 'A', khoCol: 'B', prefix: { HCM20: 'PDA-20-', ST: 'PDA-ST-', TK: 'PDA-TK-' }, pad: 2 },
     params: ['M3'], paramKho: 'M3', side: [{ title: 'Bảng tổng hợp PDA (theo ô M3)', from: 'L', to: 'auto', headerRow: 4, rows: 6 }, { title: 'So sánh 3 kho', from: 'M', to: 'P', headerRow: 17, rows: 3 }] },
   CAP_PHAT_PDA: { title: 'Cấp phát PDA hằng ngày', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { D: 'PDA' }, addRow: true, addCol: true, newestFirst: true,
-    people: { msnv: 'F', name: 'G' }, loan: 'PDA', always: true, after: 'THONG_KE_PDA' },
+    people: { msnv: 'F', name: 'G' }, loan: 'PDA', type: 'pdaloan', always: true, after: 'THONG_KE_PDA' },
 
   // Định mức & Kế hoạch (GĐ6)
   DINH_MUC: { title: 'Định mức Min / Max', icon: 'gauge', group: 'kh', type: 'table', headerRow: 4, dataStart: 5,
@@ -158,5 +161,11 @@ window.AUTO_LOCAL = {
     sub: 'Mỗi chiếc nón / áo 1 dòng. Nhân viên nhận → điền tên vào "Người đang giữ". Thu hồi → xóa tên. Tab được tạo trên Sheet khi chạy setupV6.',
     headers: ['Mã số', 'Loại', 'Kho', 'Người đang giữ', 'MSNV', 'Bộ phận', 'Ngày nhận', 'Tình trạng', 'Ghi chú'],
     dv: { B: ['Nón bảo hộ', 'Áo phản quang'], C: ['HCM20', 'ST', 'TK'], F: BO_PHAN, H: ['Tốt', 'Cũ', 'Hư', 'Mất'] }
+  },
+  DS_NHAN_VIEN: {
+    title: 'DANH SÁCH NHÂN VIÊN – CỤM M12',
+    sub: 'Mỗi nhân viên 1 dòng, MSNV không trùng. Web tự thêm người mới khi cấp PDA lần đầu. Tab được tạo trên Sheet khi chạy setupV7 (hoặc khi thêm người đầu tiên).',
+    headers: ['Họ tên', 'MSNV', 'Bộ phận', 'Kho', 'SĐT', 'Trạng thái', 'Ngày thêm', 'Ghi chú'],
+    dv: { C: BO_PHAN, D: ['HCM20', 'ST', 'TK'], F: ['Đang làm', 'Nghỉ việc'] }
   }
 };

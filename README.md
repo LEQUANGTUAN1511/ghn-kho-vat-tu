@@ -116,6 +116,21 @@ git add . && git commit -m "Cập nhật" && git push
 
 ---
 
+## Bản cập nhật V7 (25/11/2026)
+
+**Cách cập nhật (làm 1 lần):**
+1. Dán lại `Code.gs` → 💾 Lưu.
+2. Chọn hàm **`setupV7`** → ▶ Chạy → xem *Nhật ký thực thi* (tạo tab `DS_NHAN_VIEN`, nạp sẵn những người đã có trong Cấp phát PDA / nón áo).
+3. **Triển khai → Quản lý tùy chọn triển khai → ✏️ → Phiên bản mới**.
+4. Tải lên GitHub: `assets/js/app.js`, `assets/js/config.js`, `assets/css/style.css`, `apps-script/Code.gs`, `README.md`.
+5. Kiểm tra: trang *Phân quyền truy cập* → 🔎 *Kiểm tra phiên bản* phải báo **V7**.
+
+| Mục | Thay đổi |
+|---|---|
+| **Danh sách nhân viên** (Danh mục) | Tab `DS_NHAN_VIEN`: Họ tên, MSNV, Bộ phận, Kho, SĐT, Trạng thái. Ban đầu trống cũng được – cấp PDA cho người mới thì web tự lưu; lần sau gõ MSNV / tên là chọn. Có “Thêm nhiều” (dán từ Excel), xuất Excel, cột *Đang giữ PDA* và *Lượt PDA 30 ngày*. |
+| **Cấp phát PDA dạng danh sách** | Chỉ hiện máy **TỐT**, chia *Đã cấp phát* / *Trong kho*. Gõ MSNV vào ô Người nhận → Enter là cấp. Trả nhanh “✓ Trả”, “⚠ Trả có lỗi”, hoặc tích chọn nhiều máy để nhận lại cuối ca. Bảng gốc vẫn xem được qua “⚙ Bảng gốc”. |
+| **Lịch sử & tần suất** | Mỗi lượt cấp vẫn là 1 dòng ở `CAP_PHAT_PDA` (lịch sử). Tab *Lịch sử cấp PDA* (lọc tuần / tháng / bộ phận, xuất Excel) và *Tần suất theo bộ phận*: lượt lấy PDA của **Sort** và **In/out** theo tuần / tháng, trung bình / ngày, biểu đồ theo ngày, top nhân viên, sao chép báo cáo. |
+
 ## Bản cập nhật V6 (22/11/2026)
 
 **Cách cập nhật (làm 1 lần):**
