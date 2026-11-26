@@ -520,3 +520,37 @@ html.no-approve .need-approve { display: none !important; }
 .sb-prev { max-height: 260px; overflow: auto; }
 .sb-prev .tbl { font-size: 13px; }
 @media (max-width: 900px) { .freq-grid { grid-template-columns: 1fr; } .pl-new { grid-template-columns: 1fr; } }
+
+/* ---------- V8: Thống kê PDA theo tình trạng · chọn nhân viên theo MSNV · Găng tay bảo hộ ---------- */
+.c-red { color: var(--red) !important; }
+.c-green { color: var(--green) !important; }
+.c-amber { color: var(--amber) !important; }
+.tcount.c-red { background: var(--red-soft); }
+.tcount.c-green { background: var(--green-soft); }
+.tcount.c-amber { background: var(--amber-soft); }
+.sp-hint { font-size: 12px; margin-top: 4px; line-height: 1.4; }
+.sp-hint:empty { display: none; }
+.sp-hint.ok { color: var(--green); }
+.sp-hint.new { color: var(--amber); }
+.sp-new { display: grid; grid-template-columns: 1.4fr 1fr; gap: 6px; margin-top: 6px; }
+.sp-new[hidden], .sp-new [hidden] { display: none; }
+.gt-depts { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 14px 10px; align-items: center; }
+.gt-dept { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
+.gt-dept b { font-size: 13px; }
+.gt-dept span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.gt-dept.active { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-soft); }
+.gt-dates { display: flex; flex-wrap: wrap; gap: 4px; }
+.gt-d { display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; background: var(--blue-soft); color: var(--blue); }
+.gt-d.green { background: var(--green-soft); color: var(--green); }
+.gt-d.red { background: var(--red-soft); color: var(--red); }
+.gt-legend { display: flex; gap: 6px; flex-wrap: wrap; }
+.tbl.gt td { vertical-align: middle; }
+.tbl.gt .s { font-size: 12px; color: var(--muted); }
+.gt-old { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; display: grid; gap: 6px; }
+.gt-old[hidden] { display: none; }
+.gt-old .lbl { font-size: 13px; }
+.gt-opt { display: flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }
+.gt-opt.green b { color: var(--green); }
+.gt-opt.red b { color: var(--red); }
+.gt-charge { font-size: 13px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; color: var(--red); }
+.gt-charge[hidden] { display: none; }

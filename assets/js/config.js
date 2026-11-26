@@ -90,6 +90,9 @@ window.SCHEMA = {
   // Danh sách nón / áo: mỗi chiếc 1 dòng, nhân viên nhận thì chỉ cần điền tên (MSNV, ngày nhận tự điền)
   DS_BHLD: { title: 'Nón bảo hộ & áo phản quang', icon: 'helmet', group: 'cv', type: 'bhld', headerRow: 4, dataStart: 5, khoCol: 'C', addRow: true, addCol: true,
     people: { msnv: 'E', name: 'D' }, always: true, after: 'LICH_CV_ST' },
+  // Găng tay bảo hộ: sổ cấp lần đầu / đổi mới / nhập kho / kiểm kê; cảnh báo quá 3 tuần chưa đổi
+  GANG_TAY: { title: 'Găng tay bảo hộ', icon: 'glove', group: 'cv', type: 'gloves', headerRow: 4, dataStart: 5, khoCol: 'B', addRow: true, addCol: true, newestFirst: true,
+    people: { msnv: 'D', name: 'E' }, always: true, after: 'DS_BHLD' },
 
   // Thiết bị (GĐ5)
   THONG_KE_PDA: { title: 'Thống kê PDA', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, cols: 'A:K', khoCol: 'B', addRow: true, hideRowNo: true,
@@ -97,6 +100,8 @@ window.SCHEMA = {
     params: ['M3'], paramKho: 'M3', side: [{ title: 'Bảng tổng hợp PDA (theo ô M3)', from: 'L', to: 'auto', headerRow: 4, rows: 6 }, { title: 'So sánh 3 kho', from: 'M', to: 'P', headerRow: 17, rows: 3 }] },
   CAP_PHAT_PDA: { title: 'Cấp phát PDA hằng ngày', icon: 'phone', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'C', lookup: { D: 'PDA' }, addRow: true, addCol: true, newestFirst: true,
     people: { msnv: 'F', name: 'G' }, loan: 'PDA', type: 'pdaloan', always: true, after: 'THONG_KE_PDA' },
+  NHAP_PDA: { title: 'Nhật ký nhập máy PDA', icon: 'history', group: 'tb', type: 'table', headerRow: 4, dataStart: 5, khoCol: 'D', addRow: true, newestFirst: true,
+    people: { msnv: 'F', name: 'G' }, always: true, after: 'CAP_PHAT_PDA' },
 
   // Định mức & Kế hoạch (GĐ6)
   DINH_MUC: { title: 'Định mức Min / Max', icon: 'gauge', group: 'kh', type: 'table', headerRow: 4, dataStart: 5,
@@ -167,5 +172,17 @@ window.AUTO_LOCAL = {
     sub: 'Mỗi nhân viên 1 dòng, MSNV không trùng. Web tự thêm người mới khi cấp PDA lần đầu. Tab được tạo trên Sheet khi chạy setupV7 (hoặc khi thêm người đầu tiên).',
     headers: ['Họ tên', 'MSNV', 'Bộ phận', 'Kho', 'SĐT', 'Trạng thái', 'Ngày thêm', 'Ghi chú'],
     dv: { C: BO_PHAN, D: ['HCM20', 'ST', 'TK'], F: ['Đang làm', 'Nghỉ việc'] }
+  },
+  NHAP_PDA: {
+    title: 'NHẬT KÝ NHẬP MÁY PDA',
+    sub: 'Web tự ghi khi thêm máy ở Thống kê PDA: ngày nhập máy, số máy, IMEI, người nhập. Tab được tạo trên Sheet khi chạy setupV8.',
+    headers: ['Ngày nhập máy', 'Số máy PDA', 'IMEI', 'Kho', 'Tên thiết bị', 'MSNV người nhập', 'Người nhập', 'Ghi chú', 'Ghi lúc'],
+    dv: { D: ['HCM20', 'ST', 'TK'] }
+  },
+  GANG_TAY: {
+    title: 'SỔ GĂNG TAY BẢO HỘ',
+    sub: 'Mỗi dòng 1 giao dịch: Cấp lần đầu · Đổi mới · Nhập kho · Kiểm kê. Tab được tạo trên Sheet khi chạy setupV8 (hoặc lần ghi đầu tiên).',
+    headers: ['Ngày', 'Kho', 'Loại giao dịch', 'MSNV', 'Họ tên', 'Bộ phận', 'Vị trí', 'Số lượng (đôi)', 'Găng cũ', 'Đơn giá (VNĐ)', 'Truy thu (VNĐ)', 'Ghi chú', 'Người thực hiện'],
+    dv: { B: ['HCM20', 'ST', 'TK'], C: ['Cấp lần đầu', 'Đổi mới', 'Nhập kho', 'Kiểm kê'], F: BO_PHAN, I: ['Có', 'Không'] }
   }
 };

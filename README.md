@@ -116,6 +116,22 @@ git add . && git commit -m "Cập nhật" && git push
 
 ---
 
+## Bản cập nhật V8 (26/11/2026)
+
+**Cách cập nhật (làm 1 lần):**
+1. Dán lại `Code.gs` → 💾 Lưu.
+2. Chọn hàm **`setupV8`** → ▶ Chạy (tạo tab `NHAP_PDA`, `GANG_TAY`; nếu chưa chạy setupV7 thì tự chạy luôn).
+3. **Triển khai → Quản lý tùy chọn triển khai → ✏️ → Phiên bản mới**.
+4. Tải lên GitHub: `assets/js/app.js`, `assets/js/config.js`, `assets/css/style.css`, `apps-script/Code.gs`, `README.md`.
+5. Kiểm tra: trang *Phân quyền truy cập* → 🔎 *Kiểm tra phiên bản* phải báo **V8**.
+
+| Mục | Thay đổi |
+|---|---|
+| **Thống kê PDA** | Tab lọc theo tình trạng: **Tốt · Mới hư · Hư** (gồm chờ sửa / đang sửa) **· Thanh lý**. “＋ Thêm dòng” có thêm phần *Nhập máy*: ngày nhập máy + MSNV người nhập (tên lấy từ Danh sách nhân viên; MSNV mới điền tên lần đầu) → lưu ở tab `NHAP_PDA` (*Nhật ký nhập máy PDA*). |
+| **Cấp phát PDA** | Danh sách máy lấy thẳng từ Thống kê PDA, chỉ máy tình trạng **Tốt** (đã có từ V7; nay bỏ qua khoảng trắng thừa trong ô tình trạng). |
+| **Găng tay bảo hộ** (mới, dưới Nón & áo) | Tab `GANG_TAY`. Cấp phát ban đầu theo bộ phận (1 đôi / người), đổi găng có / không có găng cũ (xanh / đỏ), truy thu bắt buộc khi không có găng cũ, ảnh minh chứng, “Đã cấp x / y” theo bộ phận, cảnh báo **quá 3 tuần chưa đổi** (menu, Tổng quan, trang kho), nhập kho kèm đơn giá, kiểm kê tháng với chênh lệch sổ sách. |
+| **Đồng bộ** | Khi dữ liệu mới về, web không còn nhảy về đầu trang / đầu bảng / đầu menu; đang gõ dở, đang tích chọn hoặc đang mở hộp thoại thì chờ xong mới cập nhật. |
+
 ## Bản cập nhật V7 (25/11/2026)
 
 **Cách cập nhật (làm 1 lần):**

@@ -47,7 +47,7 @@ function doPost(e) {
 var WRITE_ACTIONS = ['update', 'append', 'appendMany', 'clearRow', 'addColumn', 'upload', 'deleteImage', 'setList', 'backup'];
 var ADMIN_ACTIONS = ['users', 'saveUser', 'deleteUser'];
 
-var SERVER_VERSION = 'V7';   // web dùng để kiểm tra đã "Triển khai phiên bản mới" chưa
+var SERVER_VERSION = 'V8';   // web dùng để kiểm tra đã "Triển khai phiên bản mới" chưa
 
 function handle_(action, p) {
   try {
@@ -564,6 +564,28 @@ var AUTO_SHEETS = {
     lists: { C: BO_PHAN_DEFAULT, D: KHO_LIST, F: ['Đang làm', 'Nghỉ việc'] },
     dates: ['G'], texts: ['B', 'E'],
     widths: { A: 200, B: 100, C: 140, E: 120, H: 240 }
+  },
+
+  // Thiết bị · NHẬT KÝ NHẬP MÁY PDA: mỗi máy mới khai báo ở Thống kê PDA ghi kèm ngày nhập + người nhập (lấy từ Danh sách nhân viên)
+  NHAP_PDA: {
+    after: 'CAP_PHAT_PDA', rows: 1000,
+    title: 'NHẬT KÝ NHẬP MÁY PDA',
+    sub: 'Web tự ghi khi thêm máy ở Thống kê PDA: ngày nhập máy, số máy, IMEI, người nhập (MSNV → tên theo Danh sách nhân viên).',
+    headers: ['Ngày nhập máy', 'Số máy PDA', 'IMEI', 'Kho', 'Tên thiết bị', 'MSNV người nhập', 'Người nhập', 'Ghi chú', 'Ghi lúc'],
+    lists: { D: KHO_LIST },
+    dates: ['A'], texts: ['B', 'C', 'F'],
+    widths: { B: 120, C: 170, E: 130, G: 180, H: 240, I: 150 }
+  },
+
+  // Công việc hằng ngày · SỔ GĂNG TAY BẢO HỘ: mỗi dòng 1 giao dịch (cấp lần đầu, đổi mới, nhập kho, kiểm kê)
+  GANG_TAY: {
+    after: 'DS_BHLD', rows: 3000,
+    title: 'SỔ GĂNG TAY BẢO HỘ',
+    sub: 'Cấp lần đầu: vật tư cấp 1 đôi cho mỗi nhân viên. Đổi mới: mang găng cũ đến đổi (Găng cũ = Có → xanh); không có găng cũ (Không → đỏ) thì truy thu = số lượng × đơn giá và chụp ảnh minh chứng. Nhập kho ghi đơn giá; Kiểm kê ghi số đếm thực tế. Quá 3 tuần chưa đổi → web cảnh báo.',
+    headers: ['Ngày', 'Kho', 'Loại giao dịch', 'MSNV', 'Họ tên', 'Bộ phận', 'Vị trí', 'Số lượng (đôi)', 'Găng cũ', 'Đơn giá (VNĐ)', 'Truy thu (VNĐ)', 'Ghi chú', 'Người thực hiện'],
+    lists: { B: KHO_LIST, C: ['Cấp lần đầu', 'Đổi mới', 'Nhập kho', 'Kiểm kê'], F: BO_PHAN_DEFAULT, I: ['Có', 'Không'] },
+    dates: ['A'], money: ['J', 'K'], texts: ['D'],
+    widths: { C: 120, E: 190, F: 130, G: 130, L: 240, M: 150 }
   }
 };
 
@@ -1289,6 +1311,36 @@ function setupV7() {
   else { reapplyAuto_(sh, 'DS_NHAN_VIEN'); out.push('DS_NHAN_VIEN: đã có'); }
   out.push('DS_NHAN_VIEN: nạp sẵn ' + seedStaff_(sh) + ' nhân viên từ dữ liệu cũ');
   if (cp) { reapplyAuto_(cp, 'CAP_PHAT_PDA'); out.push('CAP_PHAT_PDA: đã ghi lại dropdown / công thức'); }
+  try { cache_().remove('DEPS'); } catch (e) {}
+  bumpRev_('*');
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
+
+/**
+ * CHẠY 1 LẦN cho bản V8 (chọn setupV8 → ▶ Chạy, rồi Triển khai phiên bản mới). Chạy lại vẫn an toàn.
+ *  1. Tạo tab NHAP_PDA (nhật ký nhập máy PDA: ngày nhập + người nhập)
+ *  2. Tạo tab GANG_TAY (sổ găng tay bảo hộ: cấp lần đầu, đổi mới, nhập kho, kiểm kê)
+ *  3. Thống kê PDA: tình trạng gom về 4 nhóm Tốt / Mới hư / Hư / Thanh lý (giữ các lựa chọn cũ)
+ */
+function setupV8() {
+  var ss = ss_(), out = [];
+  out.push('Dấu ngăn cách công thức của Sheet: "' + formulaSep_() + '"');
+  if (!ss.getSheetByName('DS_NHAN_VIEN')) out.push(setupV7());
+  var nv = ss.getSheetByName('DS_NHAN_VIEN');
+  var bp = mergeList_(nv ? currentList_(nv, 'C') : [], BO_PHAN_DEFAULT);
+  ['NHAP_PDA', 'GANG_TAY'].forEach(function (n) {
+    var sh = ss.getSheetByName(n);
+    if (n === 'GANG_TAY') { var d = AUTO_SHEETS.GANG_TAY; d.lists = JSON.parse(JSON.stringify(d.lists)); d.lists.F = bp; }
+    if (!sh) { createAutoSheet_(n); out.push(n + ': đã tạo'); }
+    else { reapplyAuto_(sh, n); out.push(n + ': đã có'); }
+  });
+  var pd = ss.getSheetByName(PDA_SHEET);
+  if (pd) {
+    var st = mergeList_(['TỐT', 'MỚI HƯ', 'HƯ', 'CHỜ SỬA', 'ĐÃ GỬI SỬA', 'CHỜ THANH LÝ', 'ĐÃ THANH LÝ'], currentList_(pd, 'E'));
+    pd.getRange('E5:E204').setDataValidation(listRule_(st));
+    out.push('THONG_KE_PDA: dropdown tình trạng ' + st.join(' / '));
+  }
   try { cache_().remove('DEPS'); } catch (e) {}
   bumpRev_('*');
   Logger.log(out.join('\n'));

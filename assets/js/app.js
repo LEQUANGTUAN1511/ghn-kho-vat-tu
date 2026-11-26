@@ -109,6 +109,7 @@
     history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/>',
     users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/>',
+    glove: '<path d="M8 21v-5l-3.2-4.3a1.6 1.6 0 0 1 2.5-2L9 11.5V5a1.5 1.5 0 0 1 3 0v5V3.8a1.5 1.5 0 0 1 3 0V10V5.2a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-2 4.5V21"/>',
     helmet: '<path d="M3 17h18M5 17a7 7 0 0 1 14 0"/><path d="M12 6v4M9 7.5l1 3M15 7.5l-1 3"/>',
     lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="16" r="1.3"/>',
     file: '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/>',
@@ -171,7 +172,7 @@
         const code = /^\d+$/.test(a) ? '' : a;            // cột A cũ là STT (số) → chưa có số máy
         if (!imei && !code) continue;
         out.push({ v: code || imei, code, imei, l: [code ? imei : '', plain(val(n, r, 4)), plain(val(n, r, 2)), plain(val(n, r, 5))].filter(Boolean).join(' · '),
-          name: plain(val(n, r, 4)), kho: plain(val(n, r, 2)), st: plain(val(n, r, 5)), desc: plain(val(n, r, 6)), errAt: toDate(val(n, r, 7), true),
+          name: plain(val(n, r, 4)), kho: plain(val(n, r, 2)).trim(), st: plain(val(n, r, 5)).trim(), desc: plain(val(n, r, 6)), errAt: toDate(val(n, r, 7), true),
           sentAt: toDate(val(n, r, 9), true), backAt: toDate(val(n, r, 10), true), repairDue: toDate(val(n, r, 11), true), r });
       }
       return out;
@@ -497,11 +498,22 @@
   }
   const poll = () => checkChanges(false);
 
+  /** Đồng bộ ngầm KHÔNG được làm mất việc đang làm: đang gõ dở, đang mở hộp thoại / ngăn kéo → chờ xong mới vẽ lại */
+  function renderBlocked() {
+    if (state.editing || $('#drawer').classList.contains('open') || document.querySelector('.modal-bg')) return true;
+    const a = document.activeElement;
+    if (a && a.closest && a.closest('#view') && !a.closest('.search') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+    // Ô đã gõ / đã tích nhưng chưa lưu (ô tìm kiếm không tính – giá trị tìm kiếm được giữ khi vẽ lại)
+    return $$('#view input, #view textarea').some(el => !el.closest('.search') && el.offsetParent !== null &&
+      ((el.type === 'checkbox' || el.type === 'radio') ? el.checked !== el.defaultChecked : el.value !== el.defaultValue));
+  }
   function rerender() {
-    if (state.editing || $('#drawer').classList.contains('open')) { state.pendingRender = true; return; }
+    if (renderBlocked()) { state.pendingRender = true; return; }
     state.pendingRender = false;
     route(true);
   }
+  // Xong việc (rời ô nhập / đóng hộp thoại) → vẽ lại phần dữ liệu đã đồng bộ trong lúc chờ
+  document.addEventListener('focusout', () => setTimeout(() => { if (state.pendingRender && !renderBlocked()) rerender(); }, 400));
 
   /* ------------------------------------------------------------------ layout */
   function buildNav() {
@@ -526,6 +538,7 @@
         let extra = '';
         if (sc.type === 'task' && state.data) { const c = taskCounts(kk); const m = c.overdue + c.today; if (m) extra = `<span class="cnt" title="Quá hạn + đến hạn hôm nay">${m}</span>`; }
         if (sc.type === 'dv' && state.data) { const c = dvCounts(kk); const m = c.late + c.wait; if (m) extra = `<span class="cnt" title="Quá hạn timeline + chờ duyệt">${m}</span>`; }
+        if (sc.type === 'gloves' && state.data && sh(n)) { const m = glovePeople(gloveRows(), kk).filter(p => p.status === 'due').length; if (m) extra = `<span class="cnt" title="Quá 3 tuần chưa đổi găng">${m}</span>`; }
         if (sc.loan && state.data) { const m = loanCounts(LOANS[sc.loan], kk).late; if (m) extra = `<span class="cnt" title="Quá hạn trả">${m}</span>`; }
         h += a('#/sheet/' + encodeURIComponent(n), icon(sc.icon), sc.title, extra);
         extraAfter(n);
@@ -537,7 +550,9 @@
     h += a('#/nhat-ky', icon('history'), 'Nhật ký thay đổi');
     h += a('#/phan-quyen', icon('lock'), 'Phân quyền truy cập');
     h += a('#/cai-dat', icon('gear'), 'Cài đặt & Sao lưu');
+    const sb = $('#sidebar'), sy = sb ? sb.scrollTop : 0;
     $('#nav').innerHTML = h;
+    if (sb) sb.scrollTop = sy;   // đồng bộ ngầm không làm menu nhảy về đầu
   }
 
   function updateBanner() {
@@ -557,21 +572,29 @@
   function route(keepScroll) {
     const h = decodeURIComponent(location.hash || '#/tong-quan');
     const y = window.scrollY;
+    // Giữ vị trí cuộn của bảng / danh sách bên trong trang (VD bảng Thống kê PDA đang cuộn tới dòng 80)
+    const SCROLLERS = '#view .tbl-wrap, #view .lm-list, #view .scroll-keep';
+    const inner = keepScroll ? $$(SCROLLERS).map(el => [el.scrollTop, el.scrollLeft]) : [];
+    const sideEl = $('#nav') && $('#nav').closest('aside, .side, .sidebar'), sideY = sideEl ? sideEl.scrollTop : 0;
     destroyCharts();
     buildNav();
     $('#app').classList.remove('nav-open');
     const view = $('#view');
     if (!state.data) { view.innerHTML = '<div class="empty">Đang tải…</div>'; return; }
     let m;
-    if ((m = /^#\/kho\/(.+)$/.exec(h))) { renderKho(view, m[1]); loanAlerts(view, m[1]); dvAlert(view, m[1]); taskAlert(view, m[1]); }
+    if ((m = /^#\/kho\/(.+)$/.exec(h))) { renderKho(view, m[1]); loanAlerts(view, m[1]); gloveAlert(view, m[1]); dvAlert(view, m[1]); taskAlert(view, m[1]); }
     else if ((m = /^#\/sheet\/(.+)$/.exec(h))) renderSheet(view, m[1]);
     else if (h === '#/hinh-anh') renderGallery(view);
     else if (h === '#/nhat-ky') renderLog(view);
     else if (h === '#/cai-dat') renderSettings(view);
     else if (h === '#/phan-quyen') renderPerm(view);
     else if (h === '#/bao-cao-pda') renderPdaReport(view);
-    else { const k = state.kho === 'ALL' ? null : state.kho; renderOverview(view); loanAlerts(view, k); dvAlert(view, k); taskAlert(view, k); }
-    if (keepScroll) window.scrollTo(0, y); else window.scrollTo(0, 0);
+    else { const k = state.kho === 'ALL' ? null : state.kho; renderOverview(view); loanAlerts(view, k); gloveAlert(view, k); dvAlert(view, k); taskAlert(view, k); }
+    if (keepScroll) {
+      window.scrollTo(0, y);
+      $$(SCROLLERS).forEach((el, i) => { if (inner[i]) { el.scrollTop = inner[i][0]; el.scrollLeft = inner[i][1]; } });
+    } else window.scrollTo(0, 0);
+    if (sideEl) sideEl.scrollTop = sideY;
   }
 
   /* ------------------------------------------------------------------ metrics */
@@ -881,6 +904,7 @@
     if (sc.type === 'bhld' && !viewState(name).raw) return renderBhld(view, name);
     if (sc.type === 'staff' && !viewState(name).raw) return renderStaff(view, name);
     if (sc.type === 'pdaloan' && !viewState(name).raw) return renderPdaLoan(view, name);
+    if (sc.type === 'gloves' && !viewState(name).raw) return renderGloves(view, name);
     if (sc.type === 'report') {
       view.innerHTML = `<div class="card"><div class="card-h"><h3>${esc(val(name, 1, 1))}</h3><span class="sub">${esc(desc)}</span></div>${reportTable(name, sc.headerRow)}</div>`;
       return;
@@ -894,12 +918,13 @@
         <div class="card-h"><div><h3>${esc(title)}</h3><div class="sub" style="margin-top:3px">${esc(desc)}</div></div>
           <div class="right">${showKhoNote ? `<span class="chip brand">Đang lọc kho: ${esc(k)}</span>` : ''}${def.kho ? `<span class="chip" style="background:${khoInfo(def.kho).color};color:#fff;border:0">Kho ${def.kho}</span>` : ''}</div></div>
         ${paramsBlock(def)}
+        ${name === PDA_DEV ? pdaStatusTabs(vs) : ''}
         <div class="toolbar">
           <div class="search"><input class="input" id="q" placeholder="Tìm trong bảng… (phím /)" value="${esc(vs.q)}"></div>
           ${def.type !== 'calendar' ? filterSelects(def, vs) : ''}
           <div class="right">
             ${def.addRow ? `<button class="btn primary need-edit" id="addRow">＋ Thêm dòng</button>` : ''}
-            ${schemaOf(def.name).type === "stock" ? `<button class="btn" id="stockBack">← Báo cáo tồn kho</button>` : schemaOf(def.name).type === "bhld" ? `<button class="btn" id="stockBack">← Danh sách nón / áo</button>` : schemaOf(def.name).type === "staff" ? `<button class="btn" id="stockBack">← Danh sách nhân viên</button>` : schemaOf(def.name).type === "pdaloan" ? `<button class="btn" id="stockBack">← Cấp phát dạng danh sách</button>` : ""}
+            ${schemaOf(def.name).type === "stock" ? `<button class="btn" id="stockBack">← Báo cáo tồn kho</button>` : schemaOf(def.name).type === "bhld" ? `<button class="btn" id="stockBack">← Danh sách nón / áo</button>` : schemaOf(def.name).type === "staff" ? `<button class="btn" id="stockBack">← Danh sách nhân viên</button>` : schemaOf(def.name).type === "pdaloan" ? `<button class="btn" id="stockBack">← Cấp phát dạng danh sách</button>` : schemaOf(def.name).type === "gloves" ? `<button class="btn" id="stockBack">← Trang găng tay</button>` : ""}
             ${name === 'DM_NVL' || name === 'DM_CCDC' ? `<button class="btn need-edit" id="catMgr" title="Đánh dấu mã đang dùng / ngừng dùng">⚙ Đang dùng / Ngừng dùng</button>` : ''}
             ${def.addCol ? `<button class="btn need-edit" id="addCol" title="Bổ sung hạng mục (cột mới) vào bảng">＋ Hạng mục</button>` : ''}
             <button class="btn" id="csv" title="Xuất bảng đang xem ra Excel (CSV)">⭳ Xuất Excel</button>
@@ -911,6 +936,7 @@
       ${(def.side || []).map((sd, i) => sideBlock(name, sd, i)).join('')}`;
     const draw = () => drawTable(def);
     draw();
+    $$('[data-stg]', view).forEach(b => b.onclick = () => { vs.stg = b.dataset.stg; vs.page = 1; renderSheet(view, name); });
     $('#q').addEventListener('input', debounce(e => { vs.q = e.target.value; vs.page = 1; draw(); }, 200));
     if ($('#fcol')) {
       $('#fcol').onchange = e => { vs.fcol = e.target.value; vs.fval = ''; vs.page = 1; renderSheet(view, name); };
@@ -955,6 +981,7 @@
     const vs = viewState(def.name), k = state.kho;
     let rows = tableRows(def);
     if (def.khoCol && k !== 'ALL') rows = rows.filter(r => String(val(def.name, r, colNum(def.khoCol))) === k);
+    if (def.name === PDA_DEV && vs.stg) rows = rows.filter(r => pdaStatusGroup(val(def.name, r, 5)) === vs.stg);
     if (vs.fcol && vs.fval) { const c = colNum(vs.fcol); rows = rows.filter(r => plain(val(def.name, r, c)) === vs.fval); }
     if (vs.q) {
       const q = vs.q.toLowerCase();
@@ -1355,7 +1382,8 @@
       <div class="gallery" id="imgGrid"></div>
       <label class="upload mt need-edit" id="upl"><input type="file" accept="image/*" multiple id="imgInput"><b>Bấm để chọn ảnh</b> hoặc kéo thả vào đây<br><small>Trên điện thoại có thể chụp trực tiếp · ảnh tự nén ≤ 1600px</small></label>`;
     const title = isNew ? `Thêm dòng – ${schemaOf(name).title}` : `${schemaOf(name).title} · dòng ${r}`;
-    openDrawer(title, `${!isNew ? `<div class="muted" style="margin-bottom:12px">${esc(rowLabel(def, r))}</div>` : ''}<div class="form">${fields}</div>${imgs}`,
+    const ext = DRAWER_EXT[name];   // phần bổ sung riêng từng tab (VD: ngày nhập + người nhập máy PDA)
+    openDrawer(title, `${!isNew ? `<div class="muted" style="margin-bottom:12px">${esc(rowLabel(def, r))}</div>` : ''}<div class="form">${fields}</div>${ext ? ext.html(r, isNew) : ''}${imgs}`,
       `${!isNew && def.addRow ? '<button class="btn danger need-edit" id="dDel">🗑 Xóa dòng</button>' : ''}<span style="flex:1"></span><button class="btn" data-close>Đóng</button><button class="btn primary need-edit" id="dSave">${isNew ? '＋ Thêm vào Sheet' : '💾 Lưu thay đổi'}</button>`);
     const body = $('#drawerBody');
     // Tự điền tên/ĐVT khi chọn mã; tự sinh mã danh mục
@@ -1373,6 +1401,7 @@
       }
     }
     if (def.people) bindPeople(body, def);
+    if (ext) ext.bind(body, r, isNew);
     $$('select[data-managed]', body).forEach(sel => bindManagedSelect(sel, def, def.cols.find(x => x.c === +sel.dataset.c)));
     if (def.lookup) Object.keys(def.lookup).forEach(L => {
       const el = body.querySelector(`[data-c="${colNum(L)}"]`); if (!el) return;
@@ -1415,8 +1444,9 @@
           if (String(v) !== String(inputValue(val(name, r, c), ft))) changes.push({ row: r, col: c, value: v });
         }
       });
+      if (isNew && !Object.keys(values).length) { toast('Chưa nhập thông tin nào', 'warn'); return; }
+      if (ext && ext.save(r, isNew, values, changes) === false) return;
       if (isNew) {
-        if (!Object.keys(values).length) { toast('Chưa nhập thông tin nào', 'warn'); return; }
         const op = enqueue('append', { sheet: name, values, dataStart: def.dataStart, lastCol: def.lastCol });
         toast(state.apiUrl ? `Đã thêm dòng ${op.payload._row} – đang đồng bộ` : `Đã thêm dòng ${op.payload._row} trên máy`);
       } else if (changes.length) {
@@ -1611,7 +1641,7 @@
     const bg = document.createElement('div'); bg.className = 'modal-bg';
     bg.innerHTML = `<div class="modal ${cls}" role="dialog" aria-modal="true">${html}</div>`;
     document.body.appendChild(bg);
-    const close = () => bg.remove();
+    const close = () => { bg.remove(); if (state.pendingRender) setTimeout(() => { if (!renderBlocked()) rerender(); }, 300); };
     bg.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
     bg.addEventListener('click', e => { if (e.target === bg) close(); });
     return { bg, close, $: s => bg.querySelector(s), $$: s => [...bg.querySelectorAll(s)] };
@@ -2296,6 +2326,472 @@
       lines.push('', 'Chi tiết bộ phận:'); depts.forEach(([dk, v]) => lines.push(` - ${dk}: ${v.n} lượt · ${v.people.size} người${v.bad ? ' · trả lỗi ' + v.bad : ''}`));
       if (top.length) { lines.push('', 'Lấy nhiều nhất:'); top.slice(0, 5).forEach((p, i) => lines.push(` ${i + 1}. ${p.who} (${p.msnv}${p.dept ? ' · ' + p.dept : ''}): ${p.n} lượt`)); }
       try { await navigator.clipboard.writeText(lines.join('\n')); toast('Đã sao chép báo cáo tần suất'); } catch (e) { toast('Không sao chép được', 'warn'); }
+    };
+  }
+
+  /* ------------------------------------------------------------------ THỐNG KÊ PDA: nhóm tình trạng + nhập máy */
+  const PDA_STG = [['good', 'Tốt', 'green'], ['new', 'Mới hư', 'amber'], ['bad', 'Hư', 'red'], ['liq', 'Thanh lý', ''], ['other', 'Khác', '']];
+  function pdaStatusGroup(st) {
+    const s = plain(st).trim().toLowerCase();
+    if (/^tốt$/.test(s)) return 'good';
+    if (/^mới hư/.test(s)) return 'new';
+    if (/thanh lý/.test(s)) return 'liq';
+    if (/^hư|sửa|bảo hành/.test(s)) return 'bad';
+    return 'other';
+  }
+  function pdaStatusTabs(vs) {
+    const k = state.kho === 'ALL' ? null : state.kho, cnt = {};
+    codes('PDA').filter(d => !k || d.kho === k).forEach(d => { const g = pdaStatusGroup(d.st); cnt[g] = (cnt[g] || 0) + 1; });
+    const all = Object.values(cnt).reduce((a, b) => a + b, 0);
+    return `<div class="toolbar"><div class="tabs">
+      <button class="tab ${!vs.stg ? 'active' : ''}" data-stg="">Tất cả <span class="tcount">${all}</span></button>
+      ${PDA_STG.filter(g => g[0] !== 'other' || cnt.other).map(g => `<button class="tab ${vs.stg === g[0] ? 'active' : ''}" data-stg="${g[0]}">${g[1]} <span class="tcount ${cnt[g[0]] && g[2] ? 'c-' + g[2] : ''}">${cnt[g[0]] || 0}</span></button>`).join('')}
+    </div><div class="right muted" style="font-size:12px">Tốt · Mới hư · Hư (gồm chờ sửa / đang sửa) · Thanh lý (chờ + đã thanh lý)</div></div>`;
+  }
+
+  /** Ô chọn nhân viên theo MSNV: có trong Danh sách nhân viên → tự hiện tên; chưa có → điền tên (và bộ phận) lần đầu */
+  function staffPicker(host, opts = {}) {
+    const people = opts.people || peopleList(), depts = staffDepts(people);
+    staffDatalist(people);
+    host.innerHTML = `<div class="sp">
+      <input class="input sp-id" list="dl-STAFF" autocomplete="off" placeholder="${esc(opts.placeholder || 'Nhập MSNV (ID)…')}" value="${esc(opts.value || '')}">
+      <div class="sp-hint"></div>
+      <div class="sp-new" hidden><input class="input sp-nm" placeholder="Họ tên (chỉ nhập lần đầu)">${opts.needDept ? `<select class="select sp-dp"><option value="">— Bộ phận —</option>${depts.map(o => `<option>${esc(o)}</option>`).join('')}</select>` : ''}</div>
+    </div>`;
+    const id = host.querySelector('.sp-id'), hint = host.querySelector('.sp-hint'), box = host.querySelector('.sp-new'), nm = host.querySelector('.sp-nm'), dp = host.querySelector('.sp-dp');
+    let cur = null;
+    const check = () => {
+      const v = id.value.trim(); const p = staffFind(v, people);
+      if (!v) { cur = null; hint.textContent = ''; hint.className = 'sp-hint'; box.hidden = true; }
+      else if (p) {
+        const needDept = opts.needDept && !p.dept;
+        box.hidden = !needDept; nm.hidden = true;
+        cur = { msnv: p.msnv, name: p.name, dept: p.dept || (dp ? dp.value : ''), known: true, src: p.src, r: p.r, dept0: p.dept, kho: p.kho };
+        hint.className = 'sp-hint ok';
+        hint.innerHTML = `✓ <b>${esc(p.name)}</b> · ${esc(p.msnv)}${p.dept ? ' · ' + esc(p.dept) : needDept ? ' · <span class="warn-text">chọn bộ phận</span>' : ''}`;
+      } else {
+        box.hidden = false; nm.hidden = false;
+        const isName = !/\d/.test(v);
+        cur = { msnv: isName ? '' : v.replace(/\s+/g, ''), name: nm.value.trim() || (isName ? v : ''), dept: dp ? dp.value : '', isNew: true };
+        hint.className = 'sp-hint new';
+        hint.textContent = isName ? 'Không tìm thấy tên này – hãy nhập MSNV.' : 'MSNV chưa có trong Danh sách nhân viên – nhập họ tên lần đầu, các lần sau tên tự hiện.';
+      }
+      if (opts.onChange) opts.onChange(cur);
+    };
+    id.addEventListener('input', check); nm.addEventListener('input', check); if (dp) dp.addEventListener('change', check);
+    check();
+    return {
+      input: id,
+      /** null = để trống; { error } = thiếu thông tin; còn lại = nhân viên hợp lệ */
+      get() {
+        check();
+        if (!cur) return null;
+        if (!cur.msnv) return { error: 'Cần nhập MSNV' };
+        if (!cur.name) return { error: `MSNV ${cur.msnv} chưa có trong danh sách – nhập họ tên` };
+        if (opts.needDept && !cur.dept) return { error: `Chọn bộ phận cho ${cur.name}` };
+        return cur;
+      },
+      focus() { (cur && cur.isNew && !nm.value ? nm : id).focus(); }
+    };
+  }
+  /** Người mới / người chỉ có trong dữ liệu cũ → lưu vào Danh sách nhân viên; người có sẵn mà thiếu bộ phận → bổ sung */
+  function staffEnsure(p, kho, note) {
+    if (!p || p.error) return;
+    if (p.isNew || p.src === 'old') staffAppend({ name: p.name, msnv: p.msnv, dept: p.dept, kho, note });
+    else if (p.r && !p.dept0 && p.dept) enqueue('update', { sheet: STAFF, changes: [{ row: p.r, col: NV.dept, value: p.dept }] });
+  }
+
+  // Nhật ký nhập máy PDA (tab NHAP_PDA)
+  const NHAP = 'NHAP_PDA', NP = { date: 1, code: 2, imei: 3, kho: 4, name: 5, msnv: 6, who: 7, note: 8, at: 9 };
+  function pdaIntake(code, imei) {
+    const s = sh(NHAP); if (!s) return null;
+    const c = String(code || '').trim().toUpperCase(), ik = imeiKey(imei || '');
+    for (let r = s.v.length; r >= 5; r--) {
+      const rc = plain(val(NHAP, r, NP.code)).trim().toUpperCase(), ri = imeiKey(plain(val(NHAP, r, NP.imei)));
+      if ((c && rc === c) || (ik.length >= 8 && ri === ik)) return { r, date: toDate(val(NHAP, r, NP.date), true), msnv: plain(val(NHAP, r, NP.msnv)).trim(), who: plain(val(NHAP, r, NP.who)).trim() };
+    }
+    return null;
+  }
+  const DRAWER_EXT = {
+    [PDA_DEV]: {
+      html(r, isNew) {
+        const it = isNew ? null : pdaIntake(plain(val(PDA_DEV, r, 1)), plain(val(PDA_DEV, r, 3)));
+        const d = isNew ? isoOf(new Date()) : it && it.date ? isoOf(it.date) : '';
+        return `<div class="sec-title">📥 Nhập máy</div>
+          <div class="form">
+            <div class="field"><label for="xInDate">Ngày nhập máy</label><input class="input" type="date" id="xInDate" value="${esc(d)}"></div>
+            <div class="field"><label>Người nhập máy (MSNV)</label><div id="xInWho"></div></div>
+          </div>
+          <p class="muted" style="font-size:12px;margin:4px 0 0">Tên lấy theo <b>Danh sách nhân viên</b> – chỉ cần nhập MSNV. MSNV mới thì điền tên lần đầu, các lần sau tên tự hiện. Lưu ở tab “Nhật ký nhập máy PDA”.</p>`;
+      },
+      bind(body, r, isNew) {
+        const it = isNew ? null : pdaIntake(plain(val(PDA_DEV, r, 1)), plain(val(PDA_DEV, r, 3)));
+        this._it = it;
+        this._pick = staffPicker($('#xInWho', body), { value: it ? it.msnv : '' });
+        this._date0 = $('#xInDate', body).value;
+      },
+      save(r, isNew, values) {
+        const body = $('#drawerBody'), date = $('#xInDate', body).value, p = this._pick.get();
+        if (p && p.error) { toast(p.error, 'warn'); this._pick.focus(); return false; }
+        const code = isNew ? (values[1] || '') : plain(val(PDA_DEV, r, 1)), imei = isNew ? (values[3] || '') : plain(val(PDA_DEV, r, 3));
+        const kho = isNew ? (values[2] || '') : plain(val(PDA_DEV, r, 2)), model = isNew ? (values[4] || '') : plain(val(PDA_DEV, r, 4));
+        if (isNew && !code && !imei) { toast('Nhập Số máy PDA hoặc IMEI', 'warn'); return false; }
+        const it = this._it;
+        const changed = isNew ? !!(p || date) : (date !== this._date0 || (p ? p.msnv : '') !== (it ? it.msnv : ''));
+        if (!changed || (!p && !date)) return true;
+        if (p) staffEnsure(p, kho, 'Tự thêm khi nhập máy PDA');
+        if (it) enqueue('update', { sheet: NHAP, changes: [{ row: it.r, col: NP.date, value: date }, { row: it.r, col: NP.msnv, value: p ? p.msnv : '' }, { row: it.r, col: NP.who, value: p ? p.name : '' }] });
+        else enqueue('append', { sheet: NHAP, dataStart: 5, lastCol: 9, values: { [NP.date]: date, [NP.code]: code, [NP.imei]: imei, [NP.kho]: kho, [NP.name]: model,
+          [NP.msnv]: p ? p.msnv : '', [NP.who]: p ? p.name : '', [NP.at]: new Date().toLocaleString('vi-VN') } });
+        if (!isNew) toast('Đã lưu thông tin nhập máy');
+        return true;
+      }
+    }
+  };
+
+  /* ------------------------------------------------------------------ GĂNG TAY BẢO HỘ (tab GANG_TAY)
+   * A Ngày · B Kho · C Loại (Cấp lần đầu / Đổi mới / Nhập kho / Kiểm kê) · D MSNV · E Họ tên · F Bộ phận · G Vị trí
+   * H Số lượng (đôi) · I Găng cũ (Có = xanh / Không = đỏ) · J Đơn giá · K Truy thu · L Ghi chú · M Người thực hiện
+   * Vật tư cấp lần đầu 1 đôi / người; hư thì mang găng cũ tới đổi. Không có găng cũ → truy thu. Quá 3 tuần chưa đổi → cảnh báo. */
+  const GLOVE = 'GANG_TAY';
+  const GT = { date: 1, kho: 2, type: 3, msnv: 4, name: 5, dept: 6, pos: 7, qty: 8, old: 9, price: 10, charge: 11, note: 12, by: 13 };
+  const GT_HEAD = ['Ngày', 'Kho', 'Loại giao dịch', 'MSNV', 'Họ tên', 'Bộ phận', 'Vị trí', 'Số lượng (đôi)', 'Găng cũ', 'Đơn giá (VNĐ)', 'Truy thu (VNĐ)', 'Ghi chú', 'Người thực hiện'];
+  const GT_WARN_DAYS = 21;
+  const GT_ISSUE = ['Cấp lần đầu', 'Đổi mới'];
+  const vnd = n => (Number(n) || 0).toLocaleString('vi-VN') + ' đ';
+  function gloveRows() {
+    const s = sh(GLOVE); if (!s) return [];
+    const out = [];
+    for (let r = 5; r <= s.v.length; r++) {
+      const g = c => plain(val(GLOVE, r, c)).trim();
+      const type = g(GT.type), msnv = g(GT.msnv); if (!type && !msnv) continue;
+      out.push({ r, d: toDate(val(GLOVE, r, GT.date), true), kho: g(GT.kho), type, msnv, name: g(GT.name), dept: g(GT.dept), pos: g(GT.pos),
+        qty: num(val(GLOVE, r, GT.qty)) || 0, old: g(GT.old), price: num(val(GLOVE, r, GT.price)) || 0, charge: num(val(GLOVE, r, GT.charge)) || 0, note: g(GT.note), by: g(GT.by),
+        issue: GT_ISSUE.includes(type), red: type === 'Đổi mới' && /^không$/i.test(g(GT.old)) });
+    }
+    return out.sort((a, b) => ((a.d || 0) - (b.d || 0)) || a.r - b.r);
+  }
+  /** Tồn kho theo kho: lần kiểm kê gần nhất + nhập − cấp/đổi sau đó. Kèm chênh lệch mỗi lần kiểm kê. */
+  function gloveStock(rows) {
+    const run = {}, counts = [];
+    rows.forEach(x => {
+      const k = x.kho || 'HCM20'; run[k] = run[k] || 0;
+      if (x.type === 'Nhập kho') run[k] += x.qty;
+      else if (x.issue) run[k] -= x.qty;
+      else if (x.type === 'Kiểm kê') { counts.push({ ...x, book: run[k], diff: x.qty - run[k] }); run[k] = x.qty; }
+    });
+    return { byKho: run, counts };
+  }
+  function glovePrice(rows, kho) {
+    const imp = rows.filter(x => x.type === 'Nhập kho' && x.price > 0);
+    const same = imp.filter(x => !kho || x.kho === kho);
+    const x = (same.length ? same : imp).slice(-1)[0];
+    return x ? x.price : 0;
+  }
+  /** Mỗi nhân viên: lần cấp đầu, các lần đổi (xanh / đỏ), lần gần nhất, truy thu */
+  function glovePeople(rows, k) {
+    const staff = staffList().filter(x => x.st !== 'Nghỉ việc' && (!k || !x.kho || x.kho === k));
+    const map = {};
+    staff.forEach(s => { if (s.msnv) map[s.msnv.toUpperCase()] = { msnv: s.msnv, name: s.name, dept: s.dept, kho: s.kho, phone: s.phone, events: [] }; });
+    rows.filter(x => x.issue && x.msnv && (!k || x.kho === k)).forEach(x => {
+      const key = x.msnv.toUpperCase();
+      const p = map[key] = map[key] || { msnv: x.msnv, name: x.name, dept: x.dept, kho: x.kho, events: [], notInList: true };
+      p.events.push(x);
+      if (x.pos) p.pos = x.pos;
+      if (!p.dept && x.dept) p.dept = x.dept;
+    });
+    const t0 = today0();
+    return Object.values(map).map(p => {
+      const ev = p.events, last = ev.length ? ev[ev.length - 1] : null;
+      const days = last && last.d ? Math.round((t0 - last.d) / 86400000) : null;
+      return Object.assign(p, { first: ev.find(x => x.type === 'Cấp lần đầu') || ev[0] || null, last, days,
+        swaps: ev.filter(x => x.type === 'Đổi mới'), reds: ev.filter(x => x.red).length, charge: ev.reduce((a, x) => a + x.charge, 0),
+        status: !ev.length ? 'none' : days !== null && days >= GT_WARN_DAYS ? 'due' : 'ok' });
+    });
+  }
+  /** Cảnh báo ở Tổng quan / trang kho: nhân viên quá 3 tuần chưa đổi găng */
+  function gloveAlert(view, k) {
+    if (!sh(GLOVE)) return;
+    const n = glovePeople(gloveRows(), k).filter(p => p.status === 'due').length; if (!n) return;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `<div class="task-alert amber" data-go="#/sheet/${GLOVE}" role="link" tabindex="0">${icon('glove')}<span>Găng tay${k ? ' · ' + esc(k) : ''}: <b>${n}</b> nhân viên quá ${GT_WARN_DAYS / 7} tuần chưa đổi găng</span><span class="go">Xem →</span></div>`;
+    view.prepend(wrap); bindGo(wrap);
+  }
+
+  function renderGloves(view, name) {
+    const sc = schemaOf(name), vs = viewState(name), s = sh(name);
+    setCrumb(sc.title, 'Công việc hàng ngày');
+    vs.gt = vs.gt || 'staff'; vs.gf = vs.gf || 'all'; vs.gd = vs.gd || ''; vs.gp = vs.gp || 'month';
+    const k = state.kho === 'ALL' ? null : state.kho;
+    const rows = gloveRows(), mine = rows.filter(x => !k || x.kho === k);
+    const people = glovePeople(rows, k), stock = gloveStock(rows), price = glovePrice(rows, k);
+    const stockNow = k ? (stock.byKho[k] || 0) : Object.values(stock.byKho).reduce((a, b) => a + b, 0);
+    const [m0] = periodRange('month');
+    const month = mine.filter(x => x.d && x.d >= m0);
+    const mIn = month.filter(x => x.type === 'Nhập kho').reduce((a, x) => a + x.qty, 0), mOut = month.filter(x => x.issue).reduce((a, x) => a + x.qty, 0);
+    const mRed = month.filter(x => x.red), mCharge = mRed.reduce((a, x) => a + x.charge, 0);
+    const listed = people.filter(p => !p.notInList), issued = listed.filter(p => p.events.length);
+    const due = people.filter(p => p.status === 'due');
+    // Theo bộ phận: đã cấp / tổng nhân viên (VD Inout ca 01: 99/100)
+    const depts = {};
+    people.forEach(p => { const d = p.dept || 'Chưa ghi bộ phận'; const x = depts[d] = depts[d] || { total: 0, issued: 0, due: 0 }; if (!p.notInList) x.total++; if (p.events.length) x.issued++; if (p.status === 'due') x.due++; });
+    view.innerHTML = `
+      <div class="kpis">
+        ${kpi('Tồn kho găng tay', stockNow, `Tháng này: nhập ${mIn} · cấp / đổi ${mOut} đôi`, stockNow > 0 ? 'blue' : 'red')}
+        ${kpi('Đã cấp lần đầu', `${issued.length}/${listed.length}`, 'nhân viên trong Danh sách nhân viên', issued.length < listed.length ? 'amber' : 'green')}
+        ${kpi(`Quá ${GT_WARN_DAYS / 7} tuần chưa đổi`, due.length, 'Cần nhắc mang găng cũ tới đổi', due.length ? 'red' : 'green')}
+        ${kpi('Đổi không có găng cũ (tháng)', mRed.length, `Truy thu ${vnd(mCharge)}`, mRed.length ? 'red' : 'green')}
+        ${kpi('Đơn giá hiện tại', price ? vnd(price) : '—', price ? 'Theo lần nhập kho gần nhất' : 'Chưa có – nhập kho kèm đơn giá', price ? '' : 'amber')}
+      </div>
+      <div class="card mt">
+        <div class="card-h"><div><h3>Găng tay bảo hộ${k ? ' · ' + esc(k) : ''}</h3>
+          <div class="sub" style="margin-top:3px">Vật tư cấp lần đầu <b>1 đôi / nhân viên</b>. Găng hư → nhân viên mang <b>găng cũ</b> tới đổi (xanh); không có găng cũ → đỏ, hệ thống tính <b>truy thu</b> và chụp ảnh minh chứng. Quá ${GT_WARN_DAYS / 7} tuần chưa đổi → cảnh báo.${s && s.local ? ' <b class="warn-text">Tab chưa có trên Google Sheet – chạy setupV8 trong Apps Script.</b>' : ''}</div></div>
+          <div class="right"><button class="btn primary need-edit" id="gIssue">＋ Cấp / đổi găng</button><button class="btn need-edit" id="gFirst">⧉ Cấp phát ban đầu</button><button class="btn need-edit" id="gIn">📥 Nhập kho</button><button class="btn need-edit" id="gCount">📋 Kiểm kê</button><button class="btn" id="gRaw" title="Bảng gốc trên Google Sheet">⚙ Bảng gốc</button></div></div>
+        <div class="gt-depts">${Object.entries(depts).sort((a, b) => a[0].localeCompare(b[0], 'vi')).map(([d, x]) => `<button class="gt-dept ${vs.gd === d ? 'active' : ''}" data-gd="${esc(d)}"><b>${esc(d)}</b><span>Đã cấp ${x.issued}/${x.total || x.issued}</span>${x.due ? `<span class="c-red">${x.due} quá hạn đổi</span>` : ''}</button>`).join('') || '<span class="muted">Chưa có nhân viên – thêm ở Danh sách nhân viên.</span>'}
+          ${vs.gd ? '<button class="btn sm" data-gd="">✕ Bỏ lọc bộ phận</button>' : ''}</div>
+        <div class="toolbar"><div class="tabs">${[['staff', 'Nhân viên'], ['hist', 'Lịch sử cấp – đổi'], ['stock', 'Nhập – tồn kho']].map(t => `<button class="tab ${vs.gt === t[0] ? 'active' : ''}" data-gt="${t[0]}">${t[1]}</button>`).join('')}</div></div>
+        <div id="gBody"></div>
+      </div>`;
+    const body = $('#gBody');
+    const ctx = { name, vs, k, rows, mine, people, stock, price };
+    if (vs.gt === 'hist') gloveHist(body, ctx); else if (vs.gt === 'stock') gloveStockTab(body, ctx); else gloveStaffTab(body, ctx);
+    $$('[data-gt]', view).forEach(b => b.onclick = () => { vs.gt = b.dataset.gt; renderGloves(view, name); });
+    $$('[data-gd]', view).forEach(b => b.onclick = () => { vs.gd = vs.gd === b.dataset.gd ? '' : b.dataset.gd; renderGloves(view, name); });
+    $('#gIssue').onclick = () => openGloveIssue(ctx);
+    $('#gFirst').onclick = () => openGloveFirst(ctx);
+    $('#gIn').onclick = () => openGloveStock(ctx, 'Nhập kho');
+    $('#gCount').onclick = () => openGloveStock(ctx, 'Kiểm kê');
+    $('#gRaw').onclick = () => { vs.raw = true; route(true); };
+  }
+
+  function gloveStaffTab(body, ctx) {
+    const { vs, people } = ctx, edit = canEdit();
+    const inDept = people.filter(p => !vs.gd || (p.dept || 'Chưa ghi bộ phận') === vs.gd);
+    const cnt = f => inDept.filter(p => f === 'all' || (f === 'none' && !p.events.length) || (f === 'due' && p.status === 'due') || (f === 'red' && p.reds)).length;
+    body.innerHTML = `
+      <div class="toolbar"><div class="tabs">${[['all', 'Tất cả'], ['none', 'Chưa cấp'], ['due', `Quá ${GT_WARN_DAYS / 7} tuần chưa đổi`], ['red', 'Có truy thu']].map(t => `<button class="tab ${vs.gf === t[0] ? 'active' : ''}" data-gf="${t[0]}">${t[1]} <span class="tcount ${t[0] === 'due' || t[0] === 'red' ? (cnt(t[0]) ? 'c-red' : '') : ''}">${cnt(t[0])}</span></button>`).join('')}</div>
+        <div class="right gt-legend"><span class="gt-d first">Cấp lần đầu</span><span class="gt-d green">Đổi – có găng cũ</span><span class="gt-d red">Đổi – không có găng cũ</span></div></div>
+      <div class="toolbar"><div class="search" style="flex:1"><input class="input" id="gq" placeholder="Tìm họ tên, MSNV, bộ phận, vị trí…" value="${esc(vs.gq || '')}"></div></div>
+      <div id="gTbl"></div>`;
+    const draw = () => {
+      const q = (vs.gq || '').trim().toLowerCase();
+      const L = inDept.filter(p => (vs.gf === 'all' || (vs.gf === 'none' && !p.events.length) || (vs.gf === 'due' && p.status === 'due') || (vs.gf === 'red' && p.reds))
+        && (!q || `${p.name} ${p.msnv} ${p.dept} ${p.pos || ''}`.toLowerCase().includes(q)))
+        .sort((a, b) => ({ due: 0, none: 1, ok: 2 }[a.status] - { due: 0, none: 1, ok: 2 }[b.status]) || (b.days || 0) - (a.days || 0) || a.name.localeCompare(b.name, 'vi'));
+      $('#gTbl').innerHTML = L.length ? `<div class="tbl-wrap"><table class="tbl gt"><thead><tr><th>Nhân viên</th><th>Bộ phận</th><th>Vị trí</th><th>Lịch sử cấp / đổi</th><th class="num">Lần gần nhất</th><th class="num">Truy thu</th><th></th></tr></thead><tbody>
+        ${L.map(p => `<tr class="${p.status === 'due' ? 'is-late' : ''}">
+          <td><b>${esc(p.name || '—')}</b><div class="s">${esc(p.msnv)}${p.notInList ? ' · <span class="warn-text">chưa có trong Danh sách NV</span>' : ''}</div></td>
+          <td>${esc(p.dept || '')}</td><td>${esc(p.pos || '')}</td>
+          <td>${p.events.length ? `<div class="gt-dates">${p.events.slice(-8).map(e => `<span class="gt-d ${e.type === 'Cấp lần đầu' ? 'first' : e.red ? 'red' : 'green'}" title="${esc(e.type)}${e.red ? ' – không có găng cũ, truy thu ' + vnd(e.charge) : ''}${e.qty > 1 ? ' · ' + e.qty + ' đôi' : ''}">${e.d ? ddmm(e.d) : '?'}</span>`).join('')}${p.events.length > 8 ? `<span class="muted">+${p.events.length - 8}</span>` : ''}</div>` : '<span class="chip amber">Chưa cấp</span>'}</td>
+          <td class="num">${p.days === null ? '—' : p.status === 'due' ? `<span class="chip red">${p.days} ngày</span>` : `${p.days} ngày`}</td>
+          <td class="num">${p.charge ? `<b class="c-red">${vnd(p.charge)}</b>` : ''}</td>
+          <td class="rowact">${edit ? `<button class="btn sm ${p.events.length ? '' : 'primary'}" data-gi="${esc(p.msnv)}">${p.events.length ? '⇄ Đổi găng' : '＋ Cấp lần đầu'}</button>` : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : `<div class="empty">${people.length ? 'Không có nhân viên phù hợp.' : 'Chưa có nhân viên. Thêm ở “Danh sách nhân viên” hoặc bấm “＋ Cấp / đổi găng” và nhập MSNV.'}</div>`;
+      $$('[data-gi]', body).forEach(b => b.onclick = () => openGloveIssue(ctx, b.dataset.gi));
+    };
+    draw();
+    $$('[data-gf]', body).forEach(b => b.onclick = () => { vs.gf = b.dataset.gf; gloveStaffTab(body, ctx); });
+    $('#gq').addEventListener('input', debounce(e => { vs.gq = e.target.value; draw(); }, 200));
+  }
+
+  function gloveHist(body, ctx) {
+    const { vs, mine } = ctx;
+    const [a, b, label] = periodRange(vs.gp);
+    const L = mine.filter(x => x.issue && (!a || (x.d && x.d >= a && x.d <= b)) && (!vs.gd || (x.dept || 'Chưa ghi bộ phận') === vs.gd)).reverse();
+    const byDept = {};
+    L.forEach(x => { const d = x.dept || 'Chưa ghi bộ phận', o = byDept[d] = byDept[d] || { first: 0, green: 0, red: 0, pairs: 0, charge: 0, people: new Set() };
+      o.pairs += x.qty; o.people.add(x.msnv); if (x.type === 'Cấp lần đầu') o.first++; else if (x.red) o.red++; else o.green++; o.charge += x.charge; });
+    const tot = Object.values(byDept).reduce((s2, o) => ({ pairs: s2.pairs + o.pairs, red: s2.red + o.red, green: s2.green + o.green, first: s2.first + o.first, charge: s2.charge + o.charge }), { pairs: 0, red: 0, green: 0, first: 0, charge: 0 });
+    body.innerHTML = `
+      <div class="toolbar"><div class="muted" style="font-size:13px">${esc(label)}${a ? ` (${dmy(isoOf(a))} – ${dmy(isoOf(b))})` : ''}: <b>${tot.pairs}</b> đôi · cấp lần đầu ${tot.first} · đổi xanh <b class="c-green">${tot.green}</b> · đổi đỏ <b class="c-red">${tot.red}</b> · truy thu <b class="c-red">${vnd(tot.charge)}</b></div>
+        <div class="right">${periodSelect('gPer', vs.gp)}<button class="btn" id="gCsv">⭳ Xuất Excel</button></div></div>
+      ${Object.keys(byDept).length ? `<div class="tbl-wrap" style="max-height:none"><table class="tbl"><thead><tr><th>Bộ phận</th><th class="num">Số đôi cấp</th><th class="num">Cấp lần đầu</th><th class="num">Đổi – xanh</th><th class="num">Đổi – đỏ</th><th class="num">Số NV</th><th class="num">Truy thu</th></tr></thead><tbody>
+        ${Object.entries(byDept).sort((x, y) => y[1].pairs - x[1].pairs).map(([d, o]) => `<tr><td><b>${esc(d)}</b></td><td class="num"><b>${o.pairs}</b></td><td class="num">${o.first}</td><td class="num c-green">${o.green}</td><td class="num ${o.red ? 'c-red' : ''}">${o.red}</td><td class="num">${o.people.size}</td><td class="num">${o.charge ? vnd(o.charge) : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : ''}
+      ${L.length ? `<div class="tbl-wrap mt"><table class="tbl"><thead><tr><th class="date">Ngày</th><th>Loại</th><th>Nhân viên</th><th class="code">MSNV</th><th>Bộ phận</th><th>Vị trí</th><th class="num">SL</th><th>Găng cũ</th><th class="num">Truy thu</th><th>Ghi chú</th><th></th></tr></thead><tbody>
+        ${L.slice(0, 500).map(x => `<tr><td class="date">${x.d ? dmy(isoOf(x.d)) : ''}</td><td>${esc(x.type)}</td><td>${esc(x.name)}</td><td class="code">${esc(x.msnv)}</td><td>${esc(x.dept)}</td><td>${esc(x.pos)}</td><td class="num">${x.qty}</td>
+          <td>${x.type === 'Đổi mới' ? `<span class="chip ${x.red ? 'red' : 'green'}">${x.red ? 'Không' : 'Có'}</span>` : ''}</td><td class="num">${x.charge ? vnd(x.charge) : ''}</td><td>${esc(x.note)}</td>
+          <td class="rowact"><button class="btn sm" data-gimg="${x.r}" title="Ảnh minh chứng">📷 ${state.images.filter(im => im.sheet === GLOVE && +im.row === x.r).length || ''}</button></td></tr>`).join('')}
+        </tbody></table></div>` : `<div class="empty">Chưa có lượt cấp / đổi găng trong ${esc(label.toLowerCase())}.</div>`}`;
+    $('#gPer').onchange = e => { vs.gp = e.target.value; gloveHist(body, ctx); };
+    $$('[data-gimg]', body).forEach(b2 => b2.onclick = () => openRowDrawer(GLOVE, +b2.dataset.gimg, null, true));
+    $('#gCsv').onclick = () => {
+      const q = v => `"${String(v).replace(/"/g, '""')}"`;
+      const lines = [GT_HEAD.map(q).join(',')].concat(L.map(x => [x.d ? dmy(isoOf(x.d)) : '', x.kho, x.type, x.msnv, x.name, x.dept, x.pos, x.qty, x.old, x.price, x.charge, x.note, x.by].map(q).join(',')));
+      download(`GangTay_${vs.gp}${ctx.k ? '_' + ctx.k : ''}_${isoOf(new Date())}.csv`, '﻿' + lines.join('\r\n'), 'text/csv;charset=utf-8');
+    };
+  }
+
+  function gloveStockTab(body, ctx) {
+    const { vs, mine, stock, k } = ctx;
+    const [a, b, label] = periodRange(vs.gp);
+    const inP = x => !a || (x.d && x.d >= a && x.d <= b);
+    const P = mine.filter(inP);
+    const sum = f => P.filter(f).reduce((s2, x) => s2 + x.qty, 0);
+    const imp = P.filter(x => x.type === 'Nhập kho'), money = imp.reduce((s2, x) => s2 + x.qty * x.price, 0);
+    const counts = stock.counts.filter(x => (!k || x.kho === k) && inP(x));
+    const khoList = k ? [k] : KHO_CODES;
+    body.innerHTML = `
+      <div class="toolbar"><div class="muted" style="font-size:13px">${esc(label)}${a ? ` (${dmy(isoOf(a))} – ${dmy(isoOf(b))})` : ''}</div><div class="right">${periodSelect('gPer2', vs.gp)}</div></div>
+      <div class="kpis" style="padding:0 14px">
+        ${kpi('Nhập trong kỳ', sum(x => x.type === 'Nhập kho'), `Thành tiền ${vnd(money)}`, 'blue')}
+        ${kpi('Cấp lần đầu', sum(x => x.type === 'Cấp lần đầu'), 'đôi', '')}
+        ${kpi('Đổi mới', sum(x => x.type === 'Đổi mới'), `${P.filter(x => x.red).length} lượt không có găng cũ`, '')}
+        ${khoList.map(c => kpi(`Tồn hiện tại · ${c}`, stock.byKho[c] || 0, 'Theo kiểm kê gần nhất + nhập − cấp', (stock.byKho[c] || 0) > 0 ? 'green' : 'red')).join('')}
+      </div>
+      <div class="freq-grid">
+        <div class="card"><div class="card-h"><h3>Lịch sử nhập & giá</h3></div>
+          ${imp.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th class="date">Ngày</th><th>Kho</th><th class="num">SL (đôi)</th><th class="num">Đơn giá</th><th class="num">Thành tiền</th><th>Ghi chú</th></tr></thead><tbody>
+            ${imp.slice().reverse().map(x => `<tr><td class="date">${x.d ? dmy(isoOf(x.d)) : ''}</td><td>${esc(x.kho)}</td><td class="num">${x.qty}</td><td class="num">${x.price ? vnd(x.price) : '—'}</td><td class="num">${vnd(x.qty * x.price)}</td><td>${esc(x.note)}</td></tr>`).join('')}
+            </tbody></table></div>` : '<div class="empty">Chưa có lần nhập kho trong kỳ. Bấm “📥 Nhập kho”.</div>'}</div>
+        <div class="card"><div class="card-h"><h3>Kiểm kê hằng tháng</h3></div>
+          ${counts.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th class="date">Ngày</th><th>Kho</th><th class="num">Sổ sách</th><th class="num">Thực tế</th><th class="num">Chênh lệch</th><th>Ghi chú</th></tr></thead><tbody>
+            ${counts.slice().reverse().map(x => `<tr><td class="date">${x.d ? dmy(isoOf(x.d)) : ''}</td><td>${esc(x.kho)}</td><td class="num">${x.book}</td><td class="num"><b>${x.qty}</b></td><td class="num ${x.diff ? 'c-red' : 'c-green'}">${x.diff > 0 ? '+' : ''}${x.diff}</td><td>${esc(x.note)}</td></tr>`).join('')}
+            </tbody></table></div>` : '<div class="empty">Chưa kiểm kê trong kỳ. Cuối tháng bấm “📋 Kiểm kê” và nhập số đếm thực tế.</div>'}</div>
+      </div>`;
+    $('#gPer2').onchange = e => { vs.gp = e.target.value; gloveStockTab(body, ctx); };
+  }
+
+  const gloveBy = () => state.user || (state.me && state.me.name) || '';
+
+  /** Cấp lần đầu / đổi găng cho 1 nhân viên */
+  function openGloveIssue(ctx, msnv) {
+    const { rows, k } = ctx;
+    const m = modal(`<h3>🧤 Cấp / đổi găng tay</h3>
+      <div class="form" style="margin-top:4px">
+        <div class="field full"><label>Nhân viên (MSNV)</label><div id="giWho"></div></div>
+        <div class="field"><label for="giType">Loại</label><select class="select" id="giType">${GT_ISSUE.map(o => `<option>${o}</option>`).join('')}</select></div>
+        <div class="field"><label for="giKho">Kho</label><select class="select" id="giKho">${KHO_CODES.map(c => `<option ${c === (k || 'HCM20') ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+        <div class="field"><label for="giQty">Số lượng (đôi)</label><input class="input" type="number" id="giQty" min="1" value="1"></div>
+        <div class="field"><label for="giPos">Vị trí làm việc</label><input class="input" id="giPos" placeholder="VD: bắt hàng, quét mã…"></div>
+        <div class="field"><label for="giDate">Ngày</label><input class="input" type="date" id="giDate" value="${isoOf(new Date())}"></div>
+      </div>
+      <div id="giOldBox" class="gt-old">
+        <div class="lbl">Nhân viên có mang <b>găng cũ</b> tới đổi không?</div>
+        <label class="gt-opt green"><input type="radio" name="giOld" value="Có" checked> Có găng cũ – <b>xanh</b></label>
+        <label class="gt-opt red"><input type="radio" name="giOld" value="Không"> Không có găng cũ – <b>đỏ</b> (truy thu)</label>
+        <div id="giCharge" hidden class="gt-charge">Đơn giá <input class="input" type="number" id="giPrice" min="0" step="1000" style="width:120px"> đ → <b>Truy thu: <span id="giSum">0 đ</span></b> (bắt buộc)</div>
+      </div>
+      <div class="field"><label for="giNote">Ghi chú</label><input class="input" id="giNote" placeholder="VD: găng rách ngón cái"></div>
+      <label class="chk"><input type="checkbox" id="giPhoto"> Mở mục ảnh để chụp <b>minh chứng</b> sau khi lưu</label>
+      <p class="muted" id="giInfo" style="font-size:12px;margin:0"></p>
+      <div class="row"><button class="btn" id="giCancel" type="button">Hủy</button><button class="btn primary" id="giOk" type="button">✓ Lưu</button></div>`, 'wide');
+    let person = null;
+    const sync = () => {
+      const type = m.$('#giType').value, isSwap = type === 'Đổi mới', red = isSwap && m.$('input[name=giOld]:checked').value === 'Không';
+      m.$('#giOldBox').hidden = !isSwap; m.$('#giCharge').hidden = !red;
+      m.$('#giSum').textContent = vnd((+m.$('#giQty').value || 0) * (+m.$('#giPrice').value || 0));
+      if (red && !m.$('#giPhoto').dataset.touched) m.$('#giPhoto').checked = true;
+    };
+    const pick = staffPicker(m.$('#giWho'), { value: msnv || '', needDept: true, onChange: p => {
+      person = p;
+      const ev = p && p.msnv ? rows.filter(x => x.issue && x.msnv.toUpperCase() === p.msnv.toUpperCase()) : [];
+      const last = ev.slice(-1)[0];
+      m.$('#giType').value = ev.length ? 'Đổi mới' : 'Cấp lần đầu';
+      if (last) { if (!m.$('#giPos').value) m.$('#giPos').value = last.pos; if (last.kho) m.$('#giKho').value = last.kho; }
+      else if (p && p.kho) m.$('#giKho').value = p.kho;
+      m.$('#giInfo').innerHTML = !p || !p.msnv ? '' : ev.length ? `Đã nhận ${ev.length} lần · gần nhất ${last.d ? dmy(isoOf(last.d)) : ''} (${esc(last.type)})${last.red ? ' – không có găng cũ' : ''}` : 'Chưa nhận găng lần nào → <b>Cấp lần đầu</b> (mặc định 1 đôi).';
+      if (!m.$('#giPrice').dataset.touched) m.$('#giPrice').value = glovePrice(rows, m.$('#giKho').value) || '';
+      sync();
+    } });
+    m.$('#giPrice').addEventListener('input', () => { m.$('#giPrice').dataset.touched = '1'; sync(); });
+    m.$('#giPhoto').addEventListener('change', () => { m.$('#giPhoto').dataset.touched = '1'; });
+    ['#giType', '#giQty'].forEach(s2 => m.$(s2).addEventListener('input', sync));
+    m.$('#giType').addEventListener('change', sync);
+    m.$$('input[name=giOld]').forEach(r => r.addEventListener('change', sync));
+    if (!m.$('#giPrice').value) m.$('#giPrice').value = glovePrice(rows, m.$('#giKho').value) || '';
+    sync();
+    setTimeout(() => pick.focus(), 50);
+    m.$('#giCancel').onclick = m.close;
+    m.$('#giOk').onclick = () => {
+      const p = pick.get();
+      if (!p) { toast('Nhập MSNV nhân viên', 'warn'); pick.focus(); return; }
+      if (p.error) { toast(p.error, 'warn'); pick.focus(); return; }
+      const type = m.$('#giType').value, qty = Math.max(1, +m.$('#giQty').value || 1), kho = m.$('#giKho').value;
+      const red = type === 'Đổi mới' && m.$('input[name=giOld]:checked').value === 'Không';
+      const priceV = +m.$('#giPrice').value || 0;
+      if (red && !priceV) { toast('Nhập đơn giá để tính tiền truy thu', 'warn'); m.$('#giPrice').focus(); return; }
+      staffEnsure(p, kho, 'Tự thêm khi cấp găng tay');
+      const op = enqueue('append', { sheet: GLOVE, dataStart: 5, lastCol: GT_HEAD.length, values: { [GT.date]: m.$('#giDate').value || isoOf(new Date()), [GT.kho]: kho, [GT.type]: type,
+        [GT.msnv]: p.msnv, [GT.name]: p.name, [GT.dept]: p.dept || '', [GT.pos]: m.$('#giPos').value.trim(), [GT.qty]: qty,
+        [GT.old]: type === 'Đổi mới' ? (red ? 'Không' : 'Có') : '', [GT.price]: priceV || '', [GT.charge]: red ? qty * priceV : '', [GT.note]: m.$('#giNote').value.trim(), [GT.by]: gloveBy() } });
+      toast(`${type}: ${p.name} · ${qty} đôi${red ? ' · truy thu ' + vnd(qty * priceV) : ''}`, red ? 'warn' : '');
+      const photo = m.$('#giPhoto').checked;
+      m.close(); route(true);
+      if (photo && op && op.payload._row) setTimeout(() => openRowDrawer(GLOVE, op.payload._row, null, true), 200);
+    };
+  }
+
+  /** Cấp phát ban đầu: chọn bộ phận → tích những người chưa nhận → cấp 1 đôi / người trong 1 lần */
+  function openGloveFirst(ctx) {
+    const { people, k } = ctx, today = isoOf(new Date());
+    const depts = [...new Set(people.filter(p => !p.events.length).map(p => p.dept || 'Chưa ghi bộ phận'))].sort((a, b) => a.localeCompare(b, 'vi'));
+    const m = modal(`<h3>⧉ Cấp phát găng tay ban đầu</h3>
+      <p class="muted" style="margin:0">Bước 1: chọn bộ phận · Bước 2: tích nhân viên nhận găng (mặc định đã tích tất cả người <b>chưa nhận lần nào</b>) · Bước 3: kiểm tra vị trí, bấm Cấp. Mỗi người <b>1 đôi</b>.</p>
+      <div class="form" style="margin-top:6px">
+        <div class="field"><label for="gfDept">Bộ phận</label><select class="select" id="gfDept"><option value="">— Chọn bộ phận —</option>${depts.map(d => `<option>${esc(d)}</option>`).join('')}</select></div>
+        <div class="field"><label for="gfKho">Kho</label><select class="select" id="gfKho">${KHO_CODES.map(c => `<option ${c === (k || 'HCM20') ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+        <div class="field"><label for="gfDate">Ngày cấp</label><input class="input" type="date" id="gfDate" value="${today}"></div>
+        <div class="field"><label for="gfPos">Vị trí (áp cho người chưa ghi)</label><input class="input" id="gfPos" placeholder="VD: bắt hàng"></div>
+      </div>
+      <div id="gfList" class="sb-prev"></div>
+      ${depts.length ? '' : '<div class="empty">Mọi nhân viên trong danh sách đã được cấp lần đầu. 👍</div>'}
+      <div class="row"><button class="btn" id="gfCancel" type="button">Hủy</button><button class="btn primary" id="gfOk" type="button" disabled>Cấp 0 đôi</button></div>`, 'wide');
+    const draw = () => {
+      const d = m.$('#gfDept').value;
+      const L = people.filter(p => !p.events.length && (p.dept || 'Chưa ghi bộ phận') === d && p.msnv);
+      m.$('#gfList').innerHTML = d ? (L.length ? `<table class="tbl"><thead><tr><th><input type="checkbox" id="gfAll" checked></th><th>Họ tên</th><th>MSNV</th><th>Vị trí</th></tr></thead><tbody>${L.map(p => `<tr><td><input type="checkbox" class="gf-ck" value="${esc(p.msnv)}" checked></td><td>${esc(p.name)}</td><td>${esc(p.msnv)}</td><td><input class="input gf-pos" data-m="${esc(p.msnv)}" value="${esc(p.pos || '')}" placeholder="Vị trí"></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Bộ phận này đã cấp đủ.</div>') : '';
+      const upd = () => { const n = m.$$('.gf-ck').filter(c => c.checked).length; m.$('#gfOk').disabled = !n; m.$('#gfOk').textContent = `Cấp ${n} đôi cho ${n} người`; };
+      m.$$('.gf-ck').forEach(c => c.onchange = upd);
+      if (m.$('#gfAll')) m.$('#gfAll').onchange = e => { m.$$('.gf-ck').forEach(c => { c.checked = e.target.checked; }); upd(); };
+      upd();
+    };
+    m.$('#gfDept').onchange = draw;
+    m.$('#gfCancel').onclick = m.close;
+    m.$('#gfOk').onclick = () => {
+      const sel = new Set(m.$$('.gf-ck').filter(c => c.checked).map(c => c.value));
+      const posAll = m.$('#gfPos').value.trim(), kho = m.$('#gfKho').value, date = m.$('#gfDate').value || today, by = gloveBy();
+      const rowsOut = people.filter(p => sel.has(p.msnv)).map(p => {
+        const pe = m.$(`.gf-pos[data-m="${CSS.escape(p.msnv)}"]`);
+        return { [GT.date]: date, [GT.kho]: kho, [GT.type]: 'Cấp lần đầu', [GT.msnv]: p.msnv, [GT.name]: p.name, [GT.dept]: p.dept || '', [GT.pos]: (pe && pe.value.trim()) || posAll, [GT.qty]: 1, [GT.by]: by };
+      });
+      if (!rowsOut.length) return;
+      enqueue('appendMany', { sheet: GLOVE, dataStart: 5, lastCol: GT_HEAD.length, rows: rowsOut });
+      toast(`Đã cấp lần đầu ${rowsOut.length} đôi – ${m.$('#gfDept').value}`);
+      m.close(); route(true);
+    };
+  }
+
+  /** Nhập kho (kèm đơn giá) / Kiểm kê (số đếm thực tế) */
+  function openGloveStock(ctx, type) {
+    const { k, stock, rows } = ctx, isIn = type === 'Nhập kho', kho0 = k || 'HCM20';
+    const m = modal(`<h3>${isIn ? '📥 Nhập kho găng tay' : '📋 Kiểm kê găng tay'}</h3>
+      <div class="form" style="margin-top:4px">
+        <div class="field"><label for="gsKho">Kho</label><select class="select" id="gsKho">${KHO_CODES.map(c => `<option ${c === kho0 ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+        <div class="field"><label for="gsDate">Ngày</label><input class="input" type="date" id="gsDate" value="${isoOf(new Date())}"></div>
+        <div class="field"><label for="gsQty">${isIn ? 'Số lượng nhập (đôi)' : 'Số đếm thực tế (đôi)'}</label><input class="input" type="number" id="gsQty" min="0"></div>
+        ${isIn ? '<div class="field"><label for="gsPrice">Đơn giá (VNĐ / đôi)</label><input class="input" type="number" id="gsPrice" min="0" step="500"></div>' : ''}
+        <div class="field full"><label for="gsNote">Ghi chú</label><input class="input" id="gsNote" placeholder="${isIn ? 'Nhà cung cấp, số phiếu…' : 'Kiểm kê tháng …'}"></div>
+      </div>
+      <p class="muted" id="gsInfo" style="font-size:13px;margin:0"></p>
+      <div class="row"><button class="btn" id="gsCancel" type="button">Hủy</button><button class="btn primary" id="gsOk" type="button">✓ Lưu</button></div>`);
+    const info = () => {
+      const kho = m.$('#gsKho').value, cur = stock.byKho[kho] || 0, q = m.$('#gsQty').value;
+      m.$('#gsInfo').innerHTML = isIn ? `Tồn sổ sách hiện tại ${kho}: <b>${cur}</b> đôi · đơn giá lần trước: ${glovePrice(rows, kho) ? vnd(glovePrice(rows, kho)) : '—'}${q && m.$('#gsPrice').value ? ` · thành tiền <b>${vnd(q * m.$('#gsPrice').value)}</b>` : ''}`
+        : `Tồn sổ sách ${kho}: <b>${cur}</b> đôi${q !== '' ? ` · chênh lệch <b class="${q - cur ? 'c-red' : 'c-green'}">${q - cur > 0 ? '+' : ''}${q - cur}</b>` : ''}`;
+    };
+    if (isIn) m.$('#gsPrice').value = glovePrice(rows, kho0) || '';
+    m.$$('input, select').forEach(el => el.addEventListener('input', info)); m.$('#gsKho').addEventListener('change', () => { if (isIn && !m.$('#gsPrice').dataset.t) m.$('#gsPrice').value = glovePrice(rows, m.$('#gsKho').value) || ''; info(); });
+    if (isIn) m.$('#gsPrice').addEventListener('input', () => { m.$('#gsPrice').dataset.t = '1'; });
+    info();
+    m.$('#gsCancel').onclick = m.close;
+    m.$('#gsOk').onclick = () => {
+      const q = m.$('#gsQty').value;
+      if (q === '' || +q < 0 || (isIn && +q === 0)) { toast('Nhập số lượng', 'warn'); m.$('#gsQty').focus(); return; }
+      enqueue('append', { sheet: GLOVE, dataStart: 5, lastCol: GT_HEAD.length, values: { [GT.date]: m.$('#gsDate').value || isoOf(new Date()), [GT.kho]: m.$('#gsKho').value, [GT.type]: type,
+        [GT.qty]: +q, [GT.price]: isIn ? (+m.$('#gsPrice').value || '') : '', [GT.note]: m.$('#gsNote').value.trim(), [GT.by]: gloveBy() } });
+      toast(isIn ? `Đã nhập kho ${q} đôi găng tay` : `Đã ghi kiểm kê: ${q} đôi`);
+      m.close(); route(true);
     };
   }
 
@@ -3617,10 +4113,11 @@
         <dl>
           <dt>Lịch CV từng kho</dt><dd>Chọn tháng / năm; nhập công việc sáng / tối và tiến độ (Hoàn thành / Chưa hoàn thành). Dòng hôm nay được tô vàng.</dd>
           <dt>Nón bảo hộ & áo phản quang</dt><dd>Dạng <b>danh sách</b>: mỗi chiếc nón / áo 1 dòng (mã số tự đánh, VD NON-20-001, AO-ST-001 – tạo hàng loạt bằng “＋ Thêm nón / áo”). Nhân viên nhận → gõ <b>tên</b> (hoặc MSNV) vào ô “Người đang giữ” của chiếc đó rồi Enter – MSNV và ngày nhận tự điền. Thu hồi về kho → “↩ Thu hồi”. Hư / mất → đổi Tình trạng. Lịch sử giao – nhận xem ở Nhật ký thay đổi.</dd>
+          <dt>Găng tay bảo hộ</dt><dd><b>Cấp lần đầu</b>: “⧉ Cấp phát ban đầu” → chọn bộ phận → tích nhân viên chưa nhận (mặc định đã tích hết) → mỗi người 1 đôi. <b>Đổi găng</b>: nhân viên mang găng hư tới → bấm “⇄ Đổi găng” trên dòng người đó (hoặc “＋ Cấp / đổi găng”, nhập MSNV) → chọn <i>Có găng cũ</i> (xanh) hoặc <i>Không có găng cũ</i> (đỏ – hệ thống tính <b>truy thu</b> = số đôi × đơn giá, bắt buộc) → chụp ảnh minh chứng. Ô bộ phận ở trên cho thấy “Đã cấp x / y” từng bộ phận, bấm để lọc. Tab “Quá 3 tuần chưa đổi” = danh sách cần nhắc. <b>Nhập kho</b> ghi kèm đơn giá (lịch sử giá ở tab Nhập – tồn kho); cuối tháng <b>Kiểm kê</b> nhập số đếm thực tế → web báo chênh lệch với sổ sách.</dd>
         </dl>
         <h4>Thiết bị (GĐ5)</h4>
         <dl>
-          <dt>Thống kê PDA</dt><dd>Mỗi máy 1 dòng: <b>Số máy PDA</b> (VD: PDA-20-07 – tự gợi ý theo kho, sửa theo nhãn dán trên máy), kho, IMEI, tên thiết bị, tình trạng, mô tả lỗi, <b>ngày ghi nhận lỗi (ngày hư)</b>, ngày gửi đi sửa, ngày nhận sửa chữa, <b>dự kiến sửa xong</b>. Tình trạng gồm cả CHỜ THANH LÝ / ĐÃ THANH LÝ.</dd>
+          <dt>Thống kê PDA</dt><dd>Mỗi máy 1 dòng: <b>Số máy PDA</b> (VD: PDA-20-07 – tự gợi ý theo kho, sửa theo nhãn dán trên máy), kho, IMEI, tên thiết bị, tình trạng, mô tả lỗi, <b>ngày ghi nhận lỗi (ngày hư)</b>, ngày gửi đi sửa, ngày nhận sửa chữa, <b>dự kiến sửa xong</b>. Tình trạng gồm cả CHỜ THANH LÝ / ĐÃ THANH LÝ. Các tab phía trên bảng tách máy theo <b>Tốt · Mới hư · Hư</b> (gồm chờ sửa / đang sửa) <b>· Thanh lý</b>. Thêm máy mới: “＋ Thêm dòng” → phần <b>📥 Nhập máy</b> ghi <b>ngày nhập máy</b> và <b>MSNV người nhập</b> (tên lấy từ Danh sách nhân viên; MSNV mới thì điền tên lần đầu) – lưu ở tab “Nhật ký nhập máy PDA”.</dd>
           <dt>Cấp phát PDA hằng ngày</dt><dd>Dạng <b>danh sách máy</b> (chỉ máy tình trạng TỐT), chia 2 nhóm <i>Đã cấp phát</i> / <i>Trong kho</i>. Chọn <b>Ca cấp</b>, rồi gõ <b>MSNV</b> (hoặc tên) vào ô “Người nhận” của máy → Enter / “Cấp”. Người mới: điền họ tên + bộ phận 1 lần, web tự lưu vào <b>Danh sách nhân viên</b>; lần sau chỉ cần chọn. Nhận lại: “✓ Trả” (máy bình thường), “⚠ Trả có lỗi” (ghi lỗi, cập nhật Thống kê PDA thành MỚI HƯ), hoặc tích chọn nhiều máy → “Nhận lại máy đã chọn” khi hết ca.</dd>
           <dt>Lịch sử & tần suất cấp PDA</dt><dd>Mỗi lượt cấp được lưu thành 1 dòng ở tab CAP_PHAT_PDA. Tab <b>Lịch sử cấp PDA</b>: lọc theo tuần / tháng / bộ phận, xuất Excel. Tab <b>Tần suất theo bộ phận</b>: số lượt lấy PDA của <b>Sort</b> và <b>In/out</b> (tuần này, tuần trước, tháng này, tháng trước…), trung bình / ngày, biểu đồ theo ngày, nhân viên lấy nhiều nhất; “Sao chép báo cáo” để gửi nhóm.</dd>
           <dt>Báo cáo PDA</dt><dd>Tổng hợp từng kho: tổng máy đang quản lý, hoạt động tốt theo model, hư hỏng (mô tả, ngày hư, dự kiến sửa xong – trễ hạn tô đỏ), chờ sửa / đang bảo hành, chờ thanh lý, cấp phát trong ngày. “Sao chép báo cáo” tạo nội dung sẵn để gửi nhóm.</dd>
